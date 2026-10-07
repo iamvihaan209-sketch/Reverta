@@ -75,7 +75,21 @@ static bool jit_safe(const Arm64Insn& insn) {
     // semantics are read-modify-write and cannot be safely treated as MOV.
     if (insn.op == Arm64Op::MOV_IMM) {
         const uint32_t opc = (insn.raw >> 29) & 0x3;
-        if (opc == 0x3) return false;
+        // 00 = MOVN, 10 = MOVZ. MOVK is read-modify-write and 01 is reserved.
+        if (opc == 0x1 || opc == 0x3) return false;
+    }
+
+    // The phase-1 decoder does not yet model register shifts exactly.
+    // Only JIT straight-line instructions with no shift are safe here.
+    if (insn.op == Arm64Op::ADD_REG || insn.op == Arm64Op::SUB_REG) {
+        if (((insn.raw >> 22) & 0x3) != 0) return false;
+        // Rn=31 is SP for add/sub, not XZR.
+        if (insn.rn == 31) return false;
+    }
+    if (insn.op == Arm64Op::ADD_IMM || insn.op == Arm64Op::SUB_IMM) {
+        if (((insn.raw >> 22) & 0x1) != 0) return false;
+        // Rn=31 is SP for add/sub immediate.
+        if (insn.rn == 31) return false;
     }
     return true;
 }
