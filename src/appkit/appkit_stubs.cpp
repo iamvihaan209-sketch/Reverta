@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
 
 AppKitStubs& AppKitStubs::instance() {
     static AppKitStubs ak;
