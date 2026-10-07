@@ -31,7 +31,7 @@ Arm64Insn Arm64Decoder::decode(const uint8_t* pc, uint64_t vaddr) const {
     case 0b0100: case 0b0110:
     case 0b1100: case 0b1110: // Loads and stores
         return decode_loads_stores(insn, vaddr);
-    case 0b0010: case 0b0110&0b1010:
+    case 0b0010:
     case 0b1010: case 0b1011: // Branches, system, exceptions
         return decode_branches(insn, vaddr);
     default:
