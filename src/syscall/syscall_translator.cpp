@@ -1,5 +1,7 @@
 #include "syscall/syscall_translator.h"
 #include <sys/syscall.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstring>
