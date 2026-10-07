@@ -22,6 +22,7 @@ enum class CFTypeTag : uint32_t {
 
 // Host-side CF object header
 struct CFObject {
+    virtual ~CFObject() = default;
     CFTypeTag   tag;
     uint32_t    retain_count;
     // Payload follows in subclasses
