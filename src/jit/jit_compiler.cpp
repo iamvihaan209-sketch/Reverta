@@ -51,23 +51,6 @@ static void mov_rax_imm64(std::vector<uint8_t>& c, uint64_t value) {
     emit8(c, 0x48); emit8(c, 0xB8); emit64(c, value);
 }
 
-static void add_rax_imm(std::vector<uint8_t>& c, uint64_t value) {
-    if (value <= 0x7fffffffULL) {
-        emit8(c, 0x48); emit8(c, 0x05); emit32(c, static_cast<uint32_t>(value));
-    } else {
-        mov_rax_imm64(c, value);
-        // The caller uses rcx for the original lhs; this helper is only used
-        // when an immediate does not fit the sign-extended imm32 form.
-        emit8(c, 0x48); emit8(c, 0x01); emit8(c, 0xC1); // add rcx,rax
-        emit8(c, 0x48); emit8(c, 0x89); emit8(c, 0xC8); // mov rax,rcx
-    }
-}
-
-static void emit_binary_imm(std::vector<uint8_t>& c, uint8_t opcode, uint64_t value) {
-    mov_rax_imm64(c, value);
-    emit8(c, 0x48); emit8(c, opcode); emit8(c, 0xC8);
-}
-
 // Return true only for operations whose current decoder semantics are safe
 // to JIT without needing guest memory or flag materialization.
 static bool jit_safe(const Arm64Insn& insn) {
