@@ -1,0 +1,21 @@
+name: macOS Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-intel:
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Smoke test
+        run: ./build/reverta 2>&1 | head -n 5 || test $? -eq 1
