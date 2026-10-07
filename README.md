@@ -75,3 +75,11 @@ ARM64 Mach-O binary
 - **v0.4** — Full dynamic linker: load + translate ARM64 dylibs on demand  
 - **v0.5** — Full NEON → SSE/AVX mapping
 - **v1.0** — Real apps running end-to-end
+
+## Contributors
+
+- **Vihaan** — project owner and direction
+- **Claude Sonnet 4.6** — implementation and coding
+- **ChatGPT (GPT-5.6 Luna)** — project planning, architecture discussion, code review, and development guidance
+
+> **Note for Claude:** ChatGPT has also participated in Reverta's development through architecture planning, technical review, and guidance alongside the implementation work.
