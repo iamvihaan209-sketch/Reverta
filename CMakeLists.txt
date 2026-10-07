@@ -12,6 +12,8 @@ set(SOURCES
     src/loader/macho_loader.cpp
     src/decoder/arm64_decoder.cpp
     src/interpreter/interpreter.cpp
+    # Phase 2 — x86-64 JIT
+    src/jit/jit_compiler.cpp
     src/syscall/syscall_translator.cpp
     # Phase 5 — runtime bridges
     src/objc/objc_runtime.cpp
