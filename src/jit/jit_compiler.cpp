@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <vector>
+#include <cstddef>
 
 namespace {
 constexpr size_t kPageSizeFallback = 4096;
@@ -118,16 +119,6 @@ void JitCompiler::clear() {
 }
 
 bool JitCompiler::compile(uint64_t guest_pc, Block& out) {
-    uint8_t* host = nullptr;
-    for (const auto& seg : binary_.segments) {
-        if (seg.mapped && guest_pc >= seg.vmaddr &&
-            guest_pc < seg.vmaddr + seg.vmsize) {
-            host = seg.mapped + (guest_pc - seg.vmaddr);
-            break;
-        }
-    }
-    if (!host) return false;
-
     std::vector<uint8_t> code;
     code.reserve(512);
 
@@ -150,12 +141,6 @@ bool JitCompiler::compile(uint64_t guest_pc, Block& out) {
 
         switch (insn.op) {
         case Arm64Op::MOV_REG:
-            load_rcx(code, insn.rm);
-            store_rax(code, 31); // no-op; keeps the emitted form simple
-            emit8(code, 0x48); emit8(code, 0x89); emit8(code, 0xCF); // mov rdi,rcx
-            // Restore the CpuState pointer: it is caller-owned in RDI.
-            // Use RDX as a temporary for the value instead.
-            code.resize(code.size() - 3);
             load_rax(code, insn.rm);
             store_rax(code, insn.rd);
             break;
@@ -178,9 +163,10 @@ bool JitCompiler::compile(uint64_t guest_pc, Block& out) {
                 emit8(code, 0x48); emit8(code, 0x05);
                 emit32(code, static_cast<uint32_t>(insn.imm));
             } else {
-                load_rcx(code, 31);
+                load_rcx(code, insn.rn);
                 mov_rax_imm64(code, static_cast<uint64_t>(insn.imm));
-                emit8(code, 0x48); emit8(code, 0x01); emit8(code, 0xC8);
+                emit8(code, 0x48); emit8(code, 0x01); emit8(code, 0xC1);
+                emit8(code, 0x48); emit8(code, 0x89); emit8(code, 0xC8);
             }
             store_rax(code, insn.rd);
             break;
@@ -198,9 +184,10 @@ bool JitCompiler::compile(uint64_t guest_pc, Block& out) {
                 emit8(code, 0x48); emit8(code, 0x2D);
                 emit32(code, static_cast<uint32_t>(insn.imm));
             } else {
-                load_rcx(code, 31);
+                load_rcx(code, insn.rn);
                 mov_rax_imm64(code, static_cast<uint64_t>(insn.imm));
-                emit8(code, 0x48); emit8(code, 0x29); emit8(code, 0xC8);
+                emit8(code, 0x48); emit8(code, 0x29); emit8(code, 0xC1);
+                emit8(code, 0x48); emit8(code, 0x89); emit8(code, 0xC8);
             }
             store_rax(code, insn.rd);
             break;
@@ -248,7 +235,7 @@ bool JitCompiler::compile(uint64_t guest_pc, Block& out) {
     mov_rax_imm64(code, next_pc);
     // pc field is immediately after x[31].
     emit8(code, 0x48); emit8(code, 0x89); emit8(code, 0x87);
-    emit32(code, 256);
+    emit32(code, static_cast<uint32_t>(offsetof(CpuState, pc)));
     emit8(code, 0xC3); // ret
 
     const long page_size = ::sysconf(_SC_PAGESIZE);
