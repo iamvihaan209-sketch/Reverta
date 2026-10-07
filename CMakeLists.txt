@@ -48,3 +48,14 @@ target_compile_options(reverta PRIVATE
     $<$<CONFIG:Release>:-O3>
     $<$<CONFIG:Debug>:-g -O0>
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(reverta_jit_smoke
+        tests/jit_smoke.cpp
+        src/jit/jit_compiler.cpp
+        src/decoder/arm64_decoder.cpp
+    )
+    target_include_directories(reverta_jit_smoke PRIVATE include)
+    add_test(NAME reverta_jit_smoke COMMAND reverta_jit_smoke)
+endif()
