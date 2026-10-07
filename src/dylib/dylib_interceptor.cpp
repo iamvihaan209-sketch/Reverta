@@ -96,7 +96,8 @@ void DylibInterceptor::install_objc_stubs() {
         return args[0]; // stub: no autorelease pool
     });
     register_symbol("objc_autoreleasePoolPush", [](uint64_t*, int) -> uint64_t {
-        return 0xAUTOPOOL; // fake token
+        // Use a stable non-zero opaque token for the guest autorelease pool.
+        return 0xA0700001ULL; // fake token
     });
     register_symbol("objc_autoreleasePoolPop", [](uint64_t*, int) -> uint64_t {
         return 0;
