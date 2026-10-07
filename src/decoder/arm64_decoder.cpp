@@ -96,8 +96,8 @@ Arm64Insn Arm64Decoder::decode_data_proc_reg(uint32_t insn, uint64_t pc) const {
     uint32_t op24 = bits(insn, 28, 24);
 
     // Logical shifted register / Add-sub shifted / etc.
-    if ((op24 & 0b11000) == 0b01000) {
-        // Add/sub shifted register [28:24] = 01011/01010/etc.
+    if (op24 == 0b01011) {
+        // Add/sub shifted register [28:24] = 01011.
         bool sub = bits(insn, 30, 30);
         bool S   = bits(insn, 29, 29);
         uint32_t imm6 = bits(insn, 15, 10);
