@@ -1,42 +1,47 @@
 cmake_minimum_required(VERSION 3.20)
-project(ReverseRosetta VERSION 0.1.0 LANGUAGES CXX)
+project(Reverta VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# macOS minimum target
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
 
-# Sources
 set(SOURCES
     src/main.cpp
+    # Phase 1 — core
     src/loader/macho_loader.cpp
     src/decoder/arm64_decoder.cpp
     src/interpreter/interpreter.cpp
     src/syscall/syscall_translator.cpp
+    # Phase 5 — runtime bridges
+    src/objc/objc_runtime.cpp
+    src/swift/swift_runtime.cpp
+    src/foundation/foundation_stubs.cpp
+    src/appkit/appkit_stubs.cpp
+    src/dylib/dylib_interceptor.cpp
 )
 
-add_executable(rrosetta ${SOURCES})
+add_executable(reverta ${SOURCES})
 
-target_include_directories(rrosetta PRIVATE include)
+target_include_directories(reverta PRIVATE include)
 
-# macOS frameworks
-target_link_libraries(rrosetta
+target_link_libraries(reverta
     "-framework Foundation"
+    "-framework AppKit"
+    "-framework CoreFoundation"
     "-framework Security"
 )
 
-# Entitlements for JIT memory (MAP_JIT)
-set_target_properties(rrosetta PROPERTIES
-    XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${CMAKE_SOURCE_DIR}/entitlements/rrosetta.entitlements"
+set_target_properties(reverta PROPERTIES
+    XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
+        "${CMAKE_SOURCE_DIR}/entitlements/rrosetta.entitlements"
 )
 
-# Build type defaults
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-target_compile_options(rrosetta PRIVATE
+target_compile_options(reverta PRIVATE
     -Wall -Wextra
     $<$<CONFIG:Release>:-O3>
     $<$<CONFIG:Debug>:-g -O0>
