@@ -1,4 +1,5 @@
 #include "interpreter/interpreter.h"
+#include "jit/jit_compiler.h"
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -24,10 +25,17 @@ uint8_t* Interpreter::guest_to_host(uint64_t vaddr) const {
 
 RunResult Interpreter::run() {
     running_ = true;
+    JitCompiler jit(binary_);
+
     while (running_) {
+        // Phase 2 JIT handles safe straight-line integer blocks. Anything it
+        // cannot compile falls through to the existing interpreter.
+        if (jit.run(state_))
+            continue;
+
         uint8_t* host_pc = guest_to_host(state_.pc);
         if (!host_pc) {
-            std::fprintf(stderr, "[rrosetta] FAULT: PC 0x%llx unmapped\n",
+            std::fprintf(stderr, "[reverta] FAULT: PC 0x%llx unmapped\n",
                          (unsigned long long)state_.pc);
             return RunResult::FAULT;
         }
@@ -36,7 +44,7 @@ RunResult Interpreter::run() {
 
         if (insn.op == Arm64Op::UNKNOWN) {
             std::fprintf(stderr,
-                "[rrosetta] UNSUPPORTED insn 0x%08x at PC 0x%llx\n",
+                "[reverta] UNSUPPORTED insn 0x%08x at PC 0x%llx\n",
                 insn.raw, (unsigned long long)state_.pc);
             return RunResult::UNSUPPORTED;
         }
@@ -324,7 +332,7 @@ void Interpreter::execute_data_proc(const Arm64Insn& insn) {
         break;
 
     default:
-        std::fprintf(stderr, "[rrosetta] unhandled op %d at 0x%llx\n",
+        std::fprintf(stderr, "[reverta] unhandled op %d at 0x%llx\n",
                      (int)insn.op, (unsigned long long)insn.pc);
         running_ = false;
         break;
