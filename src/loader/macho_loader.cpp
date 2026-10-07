@@ -9,9 +9,7 @@
 #include <cstring>
 #include <cstdio>
 
-// ARM64 CPU type
-static constexpr cpu_type_t    CPU_TYPE_ARM64   = 0x0100000C;
-static constexpr cpu_subtype_t CPU_SUBTYPE_ARM64_ALL = 0;
+// Use the SDK-provided CPU_TYPE_ARM64 and CPU_SUBTYPE_ARM64_ALL macros.
 
 MachOLoader::MachOLoader() = default;
 MachOLoader::~MachOLoader() = default;
