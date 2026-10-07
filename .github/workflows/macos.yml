@@ -17,5 +17,5 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Smoke test
-        run: ./build/reverta 2>&1 | head -n 5 || test $? -eq 1
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
