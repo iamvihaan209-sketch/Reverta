@@ -16,7 +16,7 @@ The opposite of Apple's Rosetta 2.
 | 5 | Foundation / CoreFoundation stubs (CFString, CFData, CFArray, ...) | ✅ |
 | 5 | AppKit stubs (NSApplication, NSWindow, NSView, NSAlert) | ✅ |
 | 5 | Dylib interceptor (routes ARM64 dylib calls to host stubs) | ✅ |
-| 2 | JIT compiler | 🔲 |
+| 2 | JIT compiler | - |
 | 3 | Dynamic linker (full ARM64 dylib loading) | 🔲 |
 | 4 | Full NEON / SIMD | 🔲 |
 
