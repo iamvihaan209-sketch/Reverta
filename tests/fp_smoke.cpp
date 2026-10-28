@@ -29,7 +29,7 @@ static float as_float(uint64_t bits) {
 }
 
 int main() {
-    alignas(4) uint8_t code[44]{};
+    alignas(4) uint8_t code[52]{};
     put32(code + 0, 0x1E222820); // fadd s0, s1, s2
     put32(code + 4, 0x1E212000); // fcmp s0, s1
     put32(code + 8, 0x1E204003); // fmov s3, s0
@@ -41,6 +41,8 @@ int main() {
     put32(code + 32, 0x1E26000A); // fmov w10, s0
     put32(code + 36, 0x9E66008D); // fmov x13, d4
     put32(code + 40, 0x0B020020); // add w0, w1, w2
+    put32(code + 44, 0x1E21400E); // fneg s14, s0
+    put32(code + 48, 0x1E60C08F); // fabs d15, d4
 
     LoadedBinary binary{};
     Segment text{};
@@ -83,6 +85,10 @@ int main() {
     assert(state.x[13] == dbits(3.75));
     assert(interpreter.step());
     assert(state.x[0] == 1); // W-register arithmetic wraps to 32 bits, then zero-extends
-    assert(state.pc == 0x102c);
+    assert(interpreter.step());
+    assert(as_float(state.q[14][0]) == -3.75f);
+    assert(interpreter.step());
+    assert(as_double(state.q[15][0]) == 3.75);
+    assert(state.pc == 0x1034);
     return 0;
 }
