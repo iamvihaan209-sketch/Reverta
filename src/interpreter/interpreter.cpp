@@ -152,7 +152,7 @@ void Interpreter::execute(const Arm64Insn& insn) {
     // Scalar floating-point operations use the SIMD/FP register bank.
     case Arm64Op::FADD: case Arm64Op::FSUB:
     case Arm64Op::FMUL: case Arm64Op::FDIV: case Arm64Op::FABS: case Arm64Op::FNEG:
-    case Arm64Op::FCMP: case Arm64Op::FMOV: case Arm64Op::FMOV_IMM:
+    case Arm64Op::FCMP: case Arm64Op::FCMPE: case Arm64Op::FMOV: case Arm64Op::FMOV_IMM:
     case Arm64Op::FMOV_TO_GPR: case Arm64Op::FMOV_FROM_GPR:
         execute_fp(insn);
         break;
@@ -343,7 +343,7 @@ void Interpreter::execute_fp(const Arm64Insn& insn) {
         double a = 0.0, b = 0.0, result = 0.0;
         std::memcpy(&a, &state_.q[insn.rn][0], sizeof(a));
         std::memcpy(&b, &state_.q[insn.rm][0], sizeof(b));
-        if (insn.op == Arm64Op::FCMP) {
+        if (insn.op == Arm64Op::FCMP || insn.op == Arm64Op::FCMPE) {
             if (std::isnan(a) || std::isnan(b)) {
                 state_.n = false; state_.z = false; state_.c = true; state_.v = true;
             } else {
