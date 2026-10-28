@@ -156,3 +156,13 @@ Changes committed after the initial handoff:
 - Added scalar `FABS`, `FNEG`, and `FCMPE` decode/execute coverage; NaN compare flags are tested. Added an assertion that an unsupported FP type remains `UNKNOWN`.
 - CI passed for the current code/test head `9e9d3232`: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40771454350
 - This is still not complete v0.6/v0.7: export trie parsing currently registers the main image's exports only; it does not load bundled dylibs or parse their exports. FP exception signaling for FCMPE is not modeled, and FP conversions, FP memory operations, and vector SIMD remain incomplete.
+
+
+### v0.6 bundled dependency loading progress (CI verified)
+- `LoadedBinary` now records the source path, Mach-O file type and `LC_RPATH` entries.
+- `MachOLoader::load(path, slide_override)` supports loading `MH_DYLIB` images without an executable entry point or process stack, and maps each dylib at a distinct guest slide.
+- Dynamic linker now resolves absolute dependency paths plus `@loader_path`, `@executable_path`, and `@rpath` paths using current and inherited runpaths. It recursively loads dependencies, parses each dylib's ordinary export trie, applies its fixups, and restores final segment protections.
+- System libraries under `/usr/lib` and `/System/Library` still use host interceptor stubs; missing paths and non-`MH_DYLIB` dependencies fail explicitly.
+- Added a synthetic integration test that writes two fake `MH_DYLIB` files, loads one by absolute path and one through `@rpath`, and verifies both export addresses at distinct guest slides.
+- Latest verified CI run #90 at commit `3cc5a06c` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40772849504
+- Still not v0.6 complete: no real framework/app has been run; weak missing dependencies, all dyld runpath-stack rules, re-export terminals, chained formats beyond the supported subset, shared-cache layouts, symbol versioning and all ABI details are not complete. Dependency loading is only validated with synthetic Mach-O fixtures.
