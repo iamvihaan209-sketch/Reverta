@@ -28,7 +28,7 @@ enum class Arm64Op {
     // Data processing - conditional
     CSEL, CSNEG, CSINC,
     // Floating point
-    FADD, FSUB, FMUL, FDIV,
+    FADD, FSUB, FMUL, FDIV, FABS, FNEG,
     FCMP, FCMPE,
     FMOV, FMOV_IMM, FMOV_TO_GPR, FMOV_FROM_GPR,
     // Load/Store
