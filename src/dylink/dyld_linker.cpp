@@ -6,6 +6,42 @@
 #include <cstring>
 #include <functional>
 
+namespace {
+bool read_uleb128(const uint8_t*& p, const uint8_t* end, uint64_t& value) {
+    value = 0;
+    unsigned shift = 0;
+    for (unsigned i = 0; i < 10 && p < end; ++i) {
+        const uint8_t byte = *p++;
+        const uint8_t payload = byte & 0x7f;
+        if (shift == 63 && payload > 1) return false;
+        if (shift > 63 && payload != 0) return false;
+        if (shift < 64) value |= static_cast<uint64_t>(payload) << shift;
+        if ((byte & 0x80) == 0) return true;
+        shift += 7;
+    }
+    return false;
+}
+
+bool read_sleb128(const uint8_t*& p, const uint8_t* end, int64_t& value) {
+    uint64_t bits = 0;
+    unsigned shift = 0;
+    uint8_t byte = 0;
+    for (unsigned i = 0; i < 10 && p < end; ++i) {
+        byte = *p++;
+        const uint8_t payload = byte & 0x7f;
+        if (shift == 63 && payload != 0 && payload != 0x7f) return false;
+        if (shift < 64) bits |= static_cast<uint64_t>(payload) << shift;
+        shift += 7;
+        if ((byte & 0x80) == 0) {
+            if (shift < 64 && (byte & 0x40)) bits |= (~uint64_t{0}) << shift;
+            value = static_cast<int64_t>(bits);
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
 DyldLinker& DyldLinker::instance() {
     static DyldLinker dl;
     return dl;
@@ -100,119 +136,106 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
         lc += cmd->cmdsize;
     }
 
-    auto process_binds = [&](const uint8_t* bd, uint32_t bs) {
-        if (!bd || !bs) return;
-        std::string sym_name;
-        uint64_t    seg_offset = 0;
-        int         seg_index  = 0;
-        int64_t     addend     = 0;
-        (void)addend;
+    auto process_binds = [&](const uint8_t* bd, uint32_t bs) -> bool {
+        if (bs == 0) return true;
+        if (!bd) return false;
 
         std::vector<uint64_t> seg_vmaddrs;
         const uint8_t* slc = data + sizeof(mach_header_64);
-        auto* smh = reinterpret_cast<const mach_header_64*>(data);
-        for (uint32_t i = 0; i < smh->ncmds; i++) {
-            auto* sc = reinterpret_cast<const load_command*>(slc);
+        for (uint32_t i = 0; i < mh->ncmds; ++i) {
+            const auto* sc = reinterpret_cast<const load_command*>(slc);
             if (sc->cmd == LC_SEGMENT_64) {
-                auto* seg = reinterpret_cast<const segment_command_64*>(slc);
+                const auto* seg = reinterpret_cast<const segment_command_64*>(slc);
+                if (seg->vmaddr > UINT64_MAX - slide) return false;
                 seg_vmaddrs.push_back(seg->vmaddr + slide);
             }
             slc += sc->cmdsize;
         }
 
-        const uint8_t* p   = bd;
+        const uint8_t* p = bd;
         const uint8_t* end = bd + bs;
-        while (p < end) {
-            uint8_t byte = *p++;
-            uint8_t op   = byte & 0xF0;
-            uint8_t imm  = byte & 0x0F;
+        std::string sym_name;
+        uint64_t seg_offset = 0;
+        uint32_t seg_index = 0;
+        int64_t addend = 0;
+        (void)addend;
 
+        auto bind_once = [&]() -> bool {
+            if (seg_index >= seg_vmaddrs.size() || sym_name.empty()) return false;
+            if (seg_offset > UINT64_MAX - seg_vmaddrs[seg_index]) return false;
+            uint8_t* host = g2h(seg_vmaddrs[seg_index] + seg_offset);
+            if (host) patch_got_slot(host, sym_name);
+            else std::fprintf(stderr, "[dyld] bind target is not mapped: %s\n", sym_name.c_str());
+            return host != nullptr;
+        };
+
+        while (p < end) {
+            const uint8_t byte = *p++;
+            const uint8_t op = byte & 0xf0;
+            const uint8_t imm = byte & 0x0f;
+            uint64_t u = 0;
             switch (op) {
-            case 0x00: return; // DONE
-            case 0x10: break;  // SET_DYLIB_ORDINAL_IMM
-            case 0x20: case 0x30: { // SET_DYLIB_ORDINAL_ULEB / SET_DYLIB_SPECIAL_IMM
-                uint64_t v = 0; int sh = 0;
-                while (*p & 0x80) { v |= (uint64_t)(*p++ & 0x7F) << sh; sh += 7; }
-                v |= (uint64_t)(*p++ & 0x7F) << sh;
-                (void)v;
+            case 0x00: return true; // DONE
+            case 0x10: // SET_DYLIB_ORDINAL_IMM
+            case 0x30: // SET_DYLIB_SPECIAL_IMM
+            case 0x50: // SET_TYPE_IMM
                 break;
-            }
+            case 0x20: // SET_DYLIB_ORDINAL_ULEB
+                if (!read_uleb128(p, end, u)) return false;
+                break;
             case 0x40: { // SET_SYMBOL_TRAILING_FLAGS_IMM
-                sym_name = reinterpret_cast<const char*>(p);
-                p += sym_name.size() + 1;
+                const void* nul = std::memchr(p, '\0', static_cast<size_t>(end - p));
+                if (!nul) return false;
+                const auto* terminator = static_cast<const uint8_t*>(nul);
+                sym_name.assign(reinterpret_cast<const char*>(p),
+                                static_cast<size_t>(terminator - p));
+                p = terminator + 1;
                 break;
             }
-            case 0x50: break; // SET_TYPE_IMM
-            case 0x60: { // SET_ADDEND_SLEB
-                int64_t v = 0; int sh = 0; uint8_t b2;
-                do { b2=*p++; v|=(int64_t)(b2&0x7F)<<sh; sh+=7; } while(b2&0x80);
-                if (sh < 64 && (b2 & 0x40)) v |= -(1LL<<sh);
-                addend = v;
+            case 0x60: // SET_ADDEND_SLEB
+                if (!read_sleb128(p, end, addend)) return false;
                 break;
-            }
             case 0x70: // SET_SEGMENT_AND_OFFSET_ULEB
                 seg_index = imm;
-                { uint64_t v=0; int sh=0;
-                  while(*p&0x80){v|=(uint64_t)(*p++&0x7F)<<sh;sh+=7;}
-                  v|=(uint64_t)(*p++&0x7F)<<sh; seg_offset=v; }
+                if (!read_uleb128(p, end, seg_offset)) return false;
                 break;
-            case 0x80: { // ADD_ADDR_ULEB
-                uint64_t v=0; int sh=0;
-                while(*p&0x80){v|=(uint64_t)(*p++&0x7F)<<sh;sh+=7;}
-                v|=(uint64_t)(*p++&0x7F)<<sh; seg_offset += v;
+            case 0x80: // ADD_ADDR_ULEB
+                if (!read_uleb128(p, end, u) || u > UINT64_MAX - seg_offset) return false;
+                seg_offset += u;
                 break;
-            }
-            case 0x90: { // DO_BIND
-                if (seg_index < (int)seg_vmaddrs.size() && !sym_name.empty()) {
-                    uint8_t* host = g2h(seg_vmaddrs[seg_index] + seg_offset);
-                    if (host) patch_got_slot(host, sym_name);
-                }
+            case 0x90: // DO_BIND
+                if (!bind_once() || seg_offset > UINT64_MAX - 8) return false;
                 seg_offset += 8;
                 break;
-            }
-            case 0xA0: { // DO_BIND_ADD_ADDR_ULEB
-                uint64_t v=0; int sh=0;
-                while(*p&0x80){v|=(uint64_t)(*p++&0x7F)<<sh;sh+=7;}
-                v|=(uint64_t)(*p++&0x7F)<<sh;
-                if (seg_index < (int)seg_vmaddrs.size() && !sym_name.empty()) {
-                    uint8_t* host = g2h(seg_vmaddrs[seg_index] + seg_offset);
-                    if (host) patch_got_slot(host, sym_name);
-                }
-                seg_offset += v + 8;
+            case 0xa0: // DO_BIND_ADD_ADDR_ULEB
+                if (!read_uleb128(p, end, u) || !bind_once() ||
+                    u > UINT64_MAX - seg_offset - 8) return false;
+                seg_offset += u + 8;
                 break;
-            }
-            case 0xB0: { // DO_BIND_ADD_ADDR_IMM_SCALED
-                if (seg_index < (int)seg_vmaddrs.size() && !sym_name.empty()) {
-                    uint8_t* host = g2h(seg_vmaddrs[seg_index] + seg_offset);
-                    if (host) patch_got_slot(host, sym_name);
-                }
-                seg_offset += (uint64_t)imm * 8 + 8;
+            case 0xb0: // DO_BIND_ADD_ADDR_IMM_SCALED
+                if (!bind_once() || seg_offset > UINT64_MAX - (static_cast<uint64_t>(imm) * 8 + 8))
+                    return false;
+                seg_offset += static_cast<uint64_t>(imm) * 8 + 8;
                 break;
-            }
-            case 0xC0: { // DO_BIND_ULEB_TIMES_SKIPPING_ULEB
-                uint64_t count=0; int sh=0;
-                while(*p&0x80){count|=(uint64_t)(*p++&0x7F)<<sh;sh+=7;}
-                count|=(uint64_t)(*p++&0x7F)<<sh;
-                uint64_t skip=0; sh=0;
-                while(*p&0x80){skip|=(uint64_t)(*p++&0x7F)<<sh;sh+=7;}
-                skip|=(uint64_t)(*p++&0x7F)<<sh;
-                for (uint64_t j=0; j<count; j++) {
-                    if (seg_index < (int)seg_vmaddrs.size() && !sym_name.empty()) {
-                        uint8_t* host = g2h(seg_vmaddrs[seg_index] + seg_offset);
-                        if (host) patch_got_slot(host, sym_name);
-                    }
+            case 0xc0: { // DO_BIND_ULEB_TIMES_SKIPPING_ULEB
+                uint64_t count = 0, skip = 0;
+                if (!read_uleb128(p, end, count) || !read_uleb128(p, end, skip) ||
+                    count > bs) return false;
+                for (uint64_t n = 0; n < count; ++n) {
+                    if (!bind_once() || skip > UINT64_MAX - seg_offset - 8) return false;
                     seg_offset += skip + 8;
                 }
                 break;
             }
-            default: break;
+            default:
+                // Threaded binds and unknown future opcodes are not implemented.
+                return false;
             }
         }
+        return true;
     };
-
-    process_binds(bind_data, bind_size);
-    process_binds(lazy_bind_data, lazy_bind_size);
-    return true;
+    return process_binds(bind_data, bind_size) &&
+           process_binds(lazy_bind_data, lazy_bind_size);
 }
 
 bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
