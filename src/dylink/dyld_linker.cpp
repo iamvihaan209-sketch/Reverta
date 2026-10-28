@@ -239,103 +239,34 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
 }
 
 bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
-                                       uint64_t slide,
-                                       const std::function<uint8_t*(uint64_t)>& g2h) {
+                                       uint64_t /*slide*/,
+                                       const std::function<uint8_t*(uint64_t)>& /*g2h*/) {
     if (!data || size < sizeof(mach_header_64)) return false;
-    auto* mh = reinterpret_cast<const mach_header_64*>(data);
-    if (mh->magic != MH_MAGIC_64) return false;
-    if (mh->sizeofcmds > size - sizeof(mach_header_64)) return false;
-    const uint8_t* lc = data + sizeof(mach_header_64);
+    const auto* mh = reinterpret_cast<const mach_header_64*>(data);
+    if (mh->magic != MH_MAGIC_64 ||
+        mh->sizeofcmds > size - sizeof(mach_header_64)) return false;
 
-    const uint8_t* command_end = lc + mh->sizeofcmds;
-    for (uint32_t i = 0; i < mh->ncmds; i++) {
-        if (lc > command_end || static_cast<size_t>(command_end - lc) < sizeof(load_command))
-            return false;
-        auto* cmd = reinterpret_cast<const load_command*>(lc);
+    const uint8_t* cursor = data + sizeof(mach_header_64);
+    const uint8_t* end = cursor + mh->sizeofcmds;
+    for (uint32_t i = 0; i < mh->ncmds; ++i) {
+        if (static_cast<size_t>(end - cursor) < sizeof(load_command)) return false;
+        const auto* cmd = reinterpret_cast<const load_command*>(cursor);
         if (cmd->cmdsize < sizeof(load_command) ||
-            static_cast<size_t>(command_end - lc) < cmd->cmdsize) return false;
+            cmd->cmdsize > static_cast<size_t>(end - cursor)) return false;
         if (cmd->cmd == LC_DYLD_CHAINED_FIXUPS) {
             if (cmd->cmdsize < sizeof(linkedit_data_command)) return false;
-            auto* cf = reinterpret_cast<const linkedit_data_command*>(lc);
-            if (cf->dataoff > size || cf->datasize > size - cf->dataoff ||
-                cf->datasize < 28) return false;
-            const uint8_t* fixups = data + cf->dataoff;
-
-            struct ChainedHeader {
-                uint32_t fixups_version, starts_offset, imports_offset;
-                uint32_t symbols_offset, imports_count, imports_format, symbols_format;
-            };
-            struct ImportEntry {
-                uint32_t lib_ordinal : 8;
-                uint32_t weak_import : 1;
-                uint32_t name_offset : 23;
-            };
-            auto* hdr = reinterpret_cast<const ChainedHeader*>(fixups);
-            const ImportEntry* imports = reinterpret_cast<const ImportEntry*>(
-                fixups + hdr->imports_offset);
-            const char* sym_pool = reinterpret_cast<const char*>(
-                fixups + hdr->symbols_offset);
-
-            std::vector<std::string> import_names;
-            for (uint32_t j = 0; j < hdr->imports_count; j++)
-                import_names.emplace_back(sym_pool + imports[j].name_offset);
-
-            struct SegStarts {
-                uint32_t size; uint16_t first_page_input_file_offset;
-                uint16_t page_count; uint16_t page_start[1];
-            };
-            struct StartsInImage { uint32_t seg_count; uint32_t seg_info_offset[1]; };
-            auto* starts = reinterpret_cast<const StartsInImage*>(
-                fixups + hdr->starts_offset);
-
-            std::vector<uint64_t> seg_vmaddrs;
-            const uint8_t* slc2 = data + sizeof(mach_header_64);
-            auto* smh2 = reinterpret_cast<const mach_header_64*>(data);
-            for (uint32_t j = 0; j < smh2->ncmds; j++) {
-                auto* sc = reinterpret_cast<const load_command*>(slc2);
-                if (sc->cmd == LC_SEGMENT_64) {
-                    auto* seg = reinterpret_cast<const segment_command_64*>(slc2);
-                    seg_vmaddrs.push_back(seg->vmaddr + slide);
-                }
-                slc2 += sc->cmdsize;
-            }
-
-            for (uint32_t s = 0; s < starts->seg_count; s++) {
-                if (!starts->seg_info_offset[s]) continue;
-                auto* ss = reinterpret_cast<const SegStarts*>(
-                    fixups + hdr->starts_offset + starts->seg_info_offset[s]);
-                for (uint16_t pg = 0; pg < ss->page_count; pg++) {
-                    if (ss->page_start[pg] == 0xFFFF) continue;
-                    uint64_t page_addr = (s < seg_vmaddrs.size())
-                        ? seg_vmaddrs[s] + pg * 4096 : 0;
-                    uint8_t* page_host = g2h(page_addr);
-                    if (!page_host) continue;
-                    uint64_t chain_off = ss->page_start[pg];
-                    while (true) {
-                        uint8_t* slot = page_host + chain_off;
-                        uint64_t val  = *reinterpret_cast<uint64_t*>(slot);
-                        bool is_bind  = (val >> 63) & 1;
-                        if (is_bind) {
-                            uint32_t ord  = (val >> 32) & 0xFF;
-                            uint32_t next = (val >> 51) & 0xFFF;
-                            if (ord < import_names.size())
-                                patch_got_slot(slot, import_names[ord]);
-                            if (!next) break;
-                            chain_off += next * 4;
-                        } else {
-                            uint64_t target = (val & 0x3FFFFFFFFFULL) + slide;
-                            *reinterpret_cast<uint64_t*>(slot) = target;
-                            uint32_t next = (val >> 51) & 0x7FF;
-                            if (!next) break;
-                            chain_off += next * 4;
-                        }
-                    }
-                }
-            }
+            const auto* cf = reinterpret_cast<const linkedit_data_command*>(cursor);
+            if (cf->dataoff > size || cf->datasize > size - cf->dataoff) return false;
+            // Do not run the old incomplete chain walker: its assumptions about
+            // import formats, starts-in-segment layout and chain bounds are unsafe.
+            // Implemented chained-pointer formats will be enabled here explicitly.
+            std::fprintf(stderr,
+                "[dyld] chained fixups are present but this pointer format is not yet supported safely\n");
+            return false;
         }
-        lc += cmd->cmdsize;
+        cursor += cmd->cmdsize;
     }
-    return true;
+    return true; // No chained-fixups command: nothing to do.
 }
 
 bool DyldLinker::apply_fixups(const uint8_t* data, size_t size,
@@ -360,7 +291,8 @@ bool DyldLinker::link(const uint8_t* /*data*/, size_t /*size*/,
             register_dylib(std::move(dl));
             std::fprintf(stderr, "[dyld] stub: %s\n", path.c_str());
         } else {
-            std::fprintf(stderr, "[dyld] TODO: load bundled dylib %s\n", path.c_str());
+            std::fprintf(stderr, "[dyld] bundled dylib loading is not implemented: %s\n", path.c_str());
+            return false;
         }
     }
     return true;
