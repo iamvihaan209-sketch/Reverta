@@ -146,3 +146,13 @@ Changes committed after the initial handoff:
 - During implementation, CI caught escaped-newline syntax errors in the decoder; those were fixed. A subsequent correction fixed the exponent replication width in immediate expansion.
 - Run #79 at commit `cf3d43bb` completed successfully: Configure, Build and Test passed: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40770212933
 - This expands only scalar FP. Still missing include FNEG/FABS, FCMPE, conversions, FP loads/stores and broader SIMD/vector operations. Do not label v0.7 complete yet.
+
+
+### v0.6 export trie and v0.7 scalar FP verification (2026-10-29)
+- Added a bounded export-trie parser for `LC_DYLD_EXPORTS_TRIE` and the export fields in `LC_DYLD_INFO[_ONLY]`.
+- Resolves ordinary and absolute exports, applies the image slide to regular exports, and rejects malformed/unsupported re-export, resolver, thread-local, invalid-kind, and malformed terminal encodings.
+- Export symbols are staged in a temporary map and committed only after the entire trie validates, preventing malformed tries from leaving partial symbol registrations.
+- Added synthetic export-trie smoke coverage, including a regular export resolved from a slid `__TEXT` base and rejection of an out-of-range trie payload.
+- Added scalar `FABS`, `FNEG`, and `FCMPE` decode/execute coverage; NaN compare flags are tested. Added an assertion that an unsupported FP type remains `UNKNOWN`.
+- CI passed for the current code/test head `9e9d3232`: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40771454350
+- This is still not complete v0.6/v0.7: export trie parsing currently registers the main image's exports only; it does not load bundled dylibs or parse their exports. FP exception signaling for FCMPE is not modeled, and FP conversions, FP memory operations, and vector SIMD remain incomplete.
