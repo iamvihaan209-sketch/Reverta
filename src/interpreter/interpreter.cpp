@@ -366,7 +366,13 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
     if (insn.op == Arm64Op::LDRB || insn.op == Arm64Op::STRB) access_size = 1;
     else if (insn.op == Arm64Op::LDRH || insn.op == Arm64Op::STRH) access_size = 2;
     else if (insn.op == Arm64Op::LDP || insn.op == Arm64Op::STP) access_size *= 2;
-    uint8_t* host = guest_to_host(addr, access_size, is_load ? GuestAccess::Read : GuestAccess::Write);
+    const bool is_load = insn.op != Arm64Op::STR_IMM &&
+                         insn.op != Arm64Op::STR_REG &&
+                         insn.op != Arm64Op::STRB &&
+                         insn.op != Arm64Op::STRH &&
+                         insn.op != Arm64Op::STP;
+    uint8_t* host = guest_to_host(addr, access_size,
+                                  is_load ? GuestAccess::Read : GuestAccess::Write);
     if (!host) {
         std::fprintf(stderr, "[reverta] FAULT: memory access 0x%llx (%zu bytes) unmapped\n",
                      static_cast<unsigned long long>(addr), access_size);
