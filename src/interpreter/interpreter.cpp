@@ -152,7 +152,8 @@ void Interpreter::execute(const Arm64Insn& insn) {
     // Scalar floating-point operations use the SIMD/FP register bank.
     case Arm64Op::FADD: case Arm64Op::FSUB:
     case Arm64Op::FMUL: case Arm64Op::FDIV:
-    case Arm64Op::FCMP: case Arm64Op::FMOV:
+    case Arm64Op::FCMP: case Arm64Op::FMOV: case Arm64Op::FMOV_IMM:
+    case Arm64Op::FMOV_TO_GPR: case Arm64Op::FMOV_FROM_GPR:
         execute_fp(insn);
         break;
 
@@ -279,6 +280,17 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
 
 // ── Scalar floating-point execution ──────────────────────────────────────────
 void Interpreter::execute_fp(const Arm64Insn& insn) {
+    if (insn.op == Arm64Op::FMOV_TO_GPR) {
+        state_.x[insn.rd] = insn.is64 ? state_.q[insn.rn][0]
+                                      : static_cast<uint32_t>(state_.q[insn.rn][0]);
+        return;
+    }
+    if (insn.op == Arm64Op::FMOV_FROM_GPR) {
+        state_.q[insn.rd][0] = insn.is64 ? state_.x[insn.rn]
+                                        : static_cast<uint32_t>(state_.x[insn.rn]);
+        state_.q[insn.rd][1] = 0;
+        return;
+    }
     if (insn.op == Arm64Op::FMOV_IMM) {
         const uint8_t imm8 = static_cast<uint8_t>(insn.imm);
         const uint64_t sign = (imm8 >> 7) & 1;
