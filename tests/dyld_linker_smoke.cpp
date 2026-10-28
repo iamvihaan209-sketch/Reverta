@@ -2,6 +2,9 @@
 #include "dylib/dylib_interceptor.h"
 #include <mach-o/loader.h>
 #include <cassert>
+#include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -73,6 +76,36 @@ static std::vector<uint8_t> make_export_macho() {
     auto* mh = reinterpret_cast<mach_header_64*>(image.data());
     mh->magic = MH_MAGIC_64;
     mh->cputype = CPU_TYPE_ARM64;
+    mh->ncmds = 2;
+    mh->sizeofcmds = static_cast<uint32_t>(commands_size);
+    auto* seg = reinterpret_cast<segment_command_64*>(image.data() + sizeof(mach_header_64));
+    seg->cmd = LC_SEGMENT_64;
+    seg->cmdsize = sizeof(segment_command_64);
+    std::memcpy(seg->segname, "__TEXT", 6);
+    seg->vmaddr = 0x100000000ULL;
+    seg->vmsize = 0x1000;
+    auto* ex = reinterpret_cast<linkedit_data_command*>(
+        image.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
+    ex->cmd = LC_DYLD_EXPORTS_TRIE;
+    ex->cmdsize = sizeof(linkedit_data_command);
+    ex->dataoff = static_cast<uint32_t>(payload_off);
+    ex->datasize = static_cast<uint32_t>(trie.size());
+    std::memcpy(image.data() + payload_off, trie.data(), trie.size());
+    return image;
+}
+
+static std::vector<uint8_t> make_bundled_dylib() {
+    const std::vector<uint8_t> trie = {
+        0x00, 0x01, '_','b','u','n','d','l','e','d',0x00, 0x0c,
+        0x02, 0x00, 0x20, 0x00
+    };
+    const size_t commands_size = sizeof(segment_command_64) + sizeof(linkedit_data_command);
+    const size_t payload_off = sizeof(mach_header_64) + commands_size;
+    std::vector<uint8_t> image(payload_off + trie.size(), 0);
+    auto* mh = reinterpret_cast<mach_header_64*>(image.data());
+    mh->magic = MH_MAGIC_64;
+    mh->cputype = CPU_TYPE_ARM64;
+    mh->filetype = MH_DYLIB;
     mh->ncmds = 2;
     mh->sizeofcmds = static_cast<uint32_t>(commands_size);
     auto* seg = reinterpret_cast<segment_command_64*>(image.data() + sizeof(mach_header_64));
@@ -176,6 +209,25 @@ int main() {
         malformed_export.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
     bad_export->dataoff = UINT32_MAX;
     assert(!linker.link(malformed_export.data(), malformed_export.size(), 0x1000, {}));
+
+    // Load an absolute-path bundled MH_DYLIB, parse its exports, and retain its mapping.
+    auto bundled_image = make_bundled_dylib();
+    char bundled_path[] = "/tmp/reverta-bundled-test-XXXXXX";
+    const int bundled_fd = ::mkstemp(bundled_path);
+    assert(bundled_fd >= 0);
+    size_t bundled_written = 0;
+    while (bundled_written < bundled_image.size()) {
+        const ssize_t n = ::write(bundled_fd, bundled_image.data() + bundled_written,
+                                  bundled_image.size() - bundled_written);
+        assert(n > 0);
+        bundled_written += static_cast<size_t>(n);
+    }
+    ::close(bundled_fd);
+    const std::string bundled_path_copy = bundled_path;
+    assert(linker.link(export_image.data(), export_image.size(), 0x1000,
+                       {bundled_path_copy}, "/tmp/reverta-main", {}));
+    ::unlink(bundled_path);
+    assert(linker.resolve_symbol("_bundled") == 0x1100000020ULL);
 
 
     // Classic pointer rebase adds the selected image's slide to a pointer slot.
