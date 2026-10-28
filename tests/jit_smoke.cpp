@@ -19,12 +19,13 @@ int main() {
     Segment text{};
     text.name = "__TEXT";
     text.vmaddr = 0x1000;
+    text.mapped_vmaddr = 0x20001000; // simulate a non-zero guest slide
     text.vmsize = sizeof(code);
     text.mapped = code;
     binary.segments.push_back(text);
 
     CpuState state{};
-    state.pc = 0x1000;
+    state.pc = 0x20001000;
 
     JitCompiler jit(binary);
     assert(jit.run(state));
@@ -32,7 +33,7 @@ int main() {
     assert(state.x[1] == 8);
     assert(state.x[2] == (8 & 5));
     assert(state.x[3] == ((8 & 5) ^ 8));
-    assert(state.pc == 0x1010);
+    assert(state.pc == 0x20001010);
 
     std::cout << "Reverta JIT smoke test passed\n";
     return 0;
