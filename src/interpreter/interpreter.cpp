@@ -168,6 +168,11 @@ RunResult Interpreter::run() {
     JitCompiler jit(binary_);
 
     while (running_) {
+        if (!guest_to_host(state_.pc, sizeof(uint32_t), GuestAccess::Execute)) {
+            std::fprintf(stderr, "[reverta] FAULT: PC 0x%llx is not executable\n",
+                         (unsigned long long)state_.pc);
+            return RunResult::FAULT;
+        }
         // Phase 2 JIT handles safe straight-line integer blocks. Anything it
         // cannot compile falls through to the existing interpreter.
         if (jit.run(state_))
