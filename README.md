@@ -18,8 +18,8 @@ The opposite of Apple's Rosetta 2.
 | 5 | Foundation / CoreFoundation stubs (CFString, CFData, CFArray, ...) | ✅ |
 | 5 | AppKit stubs (NSApplication, NSWindow, NSView, NSAlert) | ✅ |
 | 5 | Dylib interceptor (routes ARM64 dylib calls to host stubs) | ✅ |
-| 3 | Dynamic linker (classic rebases/binds + selected chained pointer formats; bundled dylibs pending) | 🟡 |
-| 0.7 | Scalar FP subset (arithmetic, compare, FMOV immediate/register/GPR) | 🟡 |
+| 3 | Dynamic linker (classic binds/rebases, selected chained formats, export trie; bundled dylibs pending) | 🟡 |
+| 0.7 | Scalar FP subset (arithmetic, compare, FABS/FNEG, FMOV immediate/register/GPR) | 🟡 |
 
 ## Build
 
@@ -75,7 +75,7 @@ ARM64 Mach-O binary
 - **v0.3** — JIT: translate ARM64 basic blocks → native x86-64, block cache
 - **v0.5.0-beta** — Stabilized JIT (shifts, CSEL, multiply variants), extended NEON (compare, saturating ops)
 - **v0.6** — Full dynamic linker: load + translate ARM64 dylibs on demand (in progress; classic binds and selected chained formats are integrated, bundled dylibs remain unsupported)  
-- **v0.7** — Floating-point ops (FADD, FCMP, FMOV; scalar arithmetic, compares, immediate moves and FP/GPR transfers implemented with smoke tests)
+- **v0.7** — Floating-point ops (FADD, FCMP, FMOV; scalar arithmetic, compares, FABS/FNEG, immediate moves and FP/GPR transfers implemented with smoke tests)
 - **v1.0** — Real apps running end-to-end
 
 ## Contributors
