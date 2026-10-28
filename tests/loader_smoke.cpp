@@ -93,6 +93,59 @@ int main() {
         }
     }
 
+    // LC_UNIXTHREAD carries a preferred virtual PC, not a file offset.
+    {
+        const size_t header_size = sizeof(mach_header_64);
+        const size_t command_size = sizeof(segment_command_64) + 16 + 33 * sizeof(uint64_t);
+        const size_t image_size = header_size + command_size + 16;
+        std::vector<uint8_t> executable(image_size, 0);
+        auto* eh = reinterpret_cast<mach_header_64*>(executable.data());
+        eh->magic = MH_MAGIC_64;
+        eh->cputype = CPU_TYPE_ARM64;
+        eh->filetype = MH_EXECUTE;
+        eh->ncmds = 2;
+        eh->sizeofcmds = static_cast<uint32_t>(command_size);
+        auto* text = reinterpret_cast<segment_command_64*>(executable.data() + header_size);
+        text->cmd = LC_SEGMENT_64;
+        text->cmdsize = sizeof(segment_command_64);
+        std::memcpy(text->segname, "__TEXT", 6);
+        text->vmaddr = 0x100000000ULL;
+        text->vmsize = 0x1000;
+        text->fileoff = 0;
+        text->filesize = image_size;
+        text->initprot = VM_PROT_READ | VM_PROT_EXECUTE;
+        text->maxprot = VM_PROT_READ | VM_PROT_EXECUTE;
+        auto* thread = reinterpret_cast<load_command*>(
+            executable.data() + header_size + sizeof(segment_command_64));
+        thread->cmd = LC_UNIXTHREAD;
+        thread->cmdsize = static_cast<uint32_t>(16 + 33 * sizeof(uint64_t));
+        auto* state = reinterpret_cast<uint64_t*>(
+            reinterpret_cast<uint8_t*>(thread) + 16);
+        state[32] = 0x100000088ULL;
+        char executable_path[] = "/tmp/reverta-thread-test-XXXXXX";
+        const int executable_fd = ::mkstemp(executable_path);
+        assert(executable_fd >= 0);
+        size_t offset = 0;
+        while (offset < executable.size()) {
+            const ssize_t n = ::write(executable_fd, executable.data() + offset,
+                                      executable.size() - offset);
+            assert(n > 0);
+            offset += static_cast<size_t>(n);
+        }
+        ::close(executable_fd);
+        MachOLoader executable_loader;
+        auto loaded = executable_loader.load(executable_path, 0x1000);
+        ::unlink(executable_path);
+        assert(loaded.has_value());
+        assert(loaded->entry_point == 0x100001088ULL);
+        for (const auto& mapped : loaded->segments)
+            if (mapped.mapped && mapped.vmsize)
+                ::munmap(mapped.mapped, static_cast<size_t>(mapped.vmsize));
+        if (loaded->stack_top)
+            ::munmap(reinterpret_cast<void*>(loaded->stack_top - 8 * 1024 * 1024),
+                     8 * 1024 * 1024);
+    }
+
     // A dylib has no executable entry point, but should load its segments and runpaths.
     const std::string rpath = "@loader_path/Frameworks";
     const size_t rpath_cmd_size = (sizeof(rpath_command) + rpath.size() + 1 + 7) & ~size_t{7};
