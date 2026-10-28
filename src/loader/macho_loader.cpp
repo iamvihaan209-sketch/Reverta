@@ -252,11 +252,6 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
             return false;
         }
 
-        int prot = PROT_NONE;
-        if (seg.initprot & VM_PROT_READ) prot |= PROT_READ;
-        if (seg.initprot & VM_PROT_WRITE) prot |= PROT_WRITE;
-        if (seg.initprot & VM_PROT_EXECUTE) prot |= PROT_EXEC;
-
         if (seg.vmaddr > std::numeric_limits<uint64_t>::max() - slide) {
             error_msg_ = "Slid segment address overflows";
             return false;
