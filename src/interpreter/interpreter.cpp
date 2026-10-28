@@ -233,7 +233,7 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
     else if (insn.op == Arm64Op::LDP || insn.op == Arm64Op::STP) access_size *= 2;
     uint8_t* host = guest_to_host(addr, access_size);
     if (!host) {
-        std::fprintf(stderr, "[reverta] FAULT: memory access 0x%llx (%zu bytes) unmapped\\n",
+        std::fprintf(stderr, "[reverta] FAULT: memory access 0x%llx (%zu bytes) unmapped\n",
                      static_cast<unsigned long long>(addr), access_size);
         faulted_ = true;
         return;
