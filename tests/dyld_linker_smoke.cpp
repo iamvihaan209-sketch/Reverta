@@ -29,9 +29,11 @@ GuestPtr DylibInterceptor::allocate_trampoline(const std::string& name) {
     return address;
 }
 
-static std::vector<uint8_t> make_macho(const std::vector<uint8_t>& binds) {
+static std::vector<uint8_t> make_macho(const std::vector<uint8_t>& binds,
+                                       const std::vector<uint8_t>& rebases = {}) {
     const size_t commands_size = sizeof(segment_command_64) + sizeof(dyld_info_command);
-    std::vector<uint8_t> image(sizeof(mach_header_64) + commands_size + binds.size(), 0);
+    const size_t payload_off = sizeof(mach_header_64) + commands_size;
+    std::vector<uint8_t> image(payload_off + rebases.size() + binds.size(), 0);
     auto* mh = reinterpret_cast<mach_header_64*>(image.data());
     mh->magic = MH_MAGIC_64;
     mh->cputype = CPU_TYPE_ARM64;
@@ -49,8 +51,11 @@ static std::vector<uint8_t> make_macho(const std::vector<uint8_t>& binds) {
         image.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
     di->cmd = LC_DYLD_INFO_ONLY;
     di->cmdsize = sizeof(dyld_info_command);
-    di->bind_off = static_cast<uint32_t>(sizeof(mach_header_64) + commands_size);
+    di->rebase_off = static_cast<uint32_t>(payload_off);
+    di->rebase_size = static_cast<uint32_t>(rebases.size());
+    di->bind_off = static_cast<uint32_t>(payload_off + rebases.size());
     di->bind_size = static_cast<uint32_t>(binds.size());
+    std::memcpy(image.data() + payload_off, rebases.data(), rebases.size());
     std::memcpy(image.data() + di->bind_off, binds.data(), binds.size());
     return image;
 }
@@ -77,6 +82,21 @@ int main() {
     uint64_t patched = 0;
     std::memcpy(&patched, guest_memory + 8, sizeof(patched));
     assert(patched == linker.resolve_symbol("_test_import"));
+
+    // Classic pointer rebase adds the selected image's slide to a pointer slot.
+    auto rebase_image = make_macho({}, {0x20, 0x08, 0x51, 0x00});
+    uint64_t original_pointer = 0x1234;
+    std::memcpy(guest_memory + 8, &original_pointer, sizeof(original_pointer));
+    auto translate_slid = [&](uint64_t address) -> uint8_t* {
+        if (address < 0x2000 || address - 0x2000 > sizeof(guest_memory) - sizeof(uint64_t))
+            return nullptr;
+        return guest_memory + (address - 0x2000);
+    };
+    assert(linker.apply_fixups(rebase_image.data(), rebase_image.size(), 0x1000,
+                               translate_slid));
+    uint64_t rebased = 0;
+    std::memcpy(&rebased, guest_memory + 8, sizeof(rebased));
+    assert(rebased == 0x2234);
 
     // A truncated ULEB in SET_SEGMENT_AND_OFFSET must be rejected, not read past end.
     auto truncated = make_macho({0x70, 0x80});
