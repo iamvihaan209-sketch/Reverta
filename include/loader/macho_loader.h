@@ -30,6 +30,7 @@ struct LoadedBinary {
     uint64_t stack_size = 0;
     uint64_t stack_top = 0;       // initial stack pointer (exclusive upper bound)
     std::vector<std::string> dylibs;
+    std::vector<std::string> weak_dylibs;
     std::vector<std::string> rpaths;
     std::string path;
     uint32_t filetype = 0;
