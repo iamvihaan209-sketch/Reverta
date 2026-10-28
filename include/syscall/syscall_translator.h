@@ -19,8 +19,12 @@
 class SyscallTranslator {
 public:
     using GuestTranslate = std::function<uint8_t*(uint64_t, size_t)>;
-    explicit SyscallTranslator(GuestTranslate translate = {})
-        : guest_to_host_(std::move(translate)) {}
+    using GuestMmap = std::function<int64_t(uint64_t, size_t, int, int, int, int64_t)>;
+    using GuestMunmap = std::function<int64_t(uint64_t, size_t)>;
+    explicit SyscallTranslator(GuestTranslate translate = {}, GuestMmap map = {},
+                               GuestMunmap unmap = {})
+        : guest_to_host_(std::move(translate)),
+          guest_mmap_(std::move(map)), guest_munmap_(std::move(unmap)) {}
     // Handle a SVC #0 from guest ARM64 code.
     // Reads X16 (syscall number), X0-X7 (args) from cpu state.
     // Writes result back to X0 (and X1 for 128-bit returns).
@@ -42,6 +46,8 @@ private:
     // (only valid when running on x86-64 host)
     bool copy_guest_string(uint64_t address, std::string& out, size_t max_length = 4096) const;
     GuestTranslate guest_to_host_;
+    GuestMmap guest_mmap_;
+    GuestMunmap guest_munmap_;
 
     int64_t raw_syscall(int64_t num,
                         int64_t a0=0, int64_t a1=0, int64_t a2=0,
