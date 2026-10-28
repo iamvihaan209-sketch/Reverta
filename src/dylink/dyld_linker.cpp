@@ -318,11 +318,12 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
 bool DyldLinker::apply_fixups(const uint8_t* data, size_t size,
                                uint64_t slide,
                                const std::function<uint8_t*(uint64_t)>& g2h) {
+    if (!data || !g2h) return false;
     std::fprintf(stderr, "[dyld] applying fixups (slide=0x%llx)\n",
                  (unsigned long long)slide);
-    parse_dyld_info(data, size, slide, g2h);
-    parse_chained_fixups(data, size, slide, g2h);
-    return true;
+    const bool classic_ok = parse_dyld_info(data, size, slide, g2h);
+    const bool chained_ok = parse_chained_fixups(data, size, slide, g2h);
+    return classic_ok && chained_ok;
 }
 
 bool DyldLinker::link(const uint8_t* /*data*/, size_t /*size*/,
