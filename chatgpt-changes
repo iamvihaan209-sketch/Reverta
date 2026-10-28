@@ -128,3 +128,12 @@ Changes committed after the initial handoff:
 - Expanded `tests/fp_smoke.cpp` to exercise both single- and double-precision FADD/FCMP/FMOV, and to catch 32-bit ADD wrap/zero-extension.
 - Expanded `tests/dyld_linker_smoke.cpp` to exercise a classic bind, reject truncated ULEB, accept no-op fixup metadata, and test a classic pointer rebase with a non-zero slide.
 - These tests validate synthetic streams only. They do not prove compatibility with arbitrary Apple-built executables or complete AArch64 instruction semantics.
+
+
+### Latest verified CI and branch/merge status (2026-10-29)
+- Latest branch head: `b069eaa891ba7161c1c1eee29712ba056e82cfab` (`Guard chained pointer address and addend overflow`).
+- Latest Actions run #74 completed successfully: Configure, Build and Test passed: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40769191810
+- Recent chained-fixup test commits also passed CI, including imported-symbol binding through a trampoline and rejection of out-of-range fixup payloads.
+- `work/v0.6-to-v1-roadmap` is 53 commits ahead of `main` and 2 commits behind/diverged. The current main-ahead commits have no file diff in the compare response, but inspect the exact commit history and GitHub PR mergeability again before merging.
+- `work/v0.6-to-v1-roadmap` already descends from `work/dyld-linker-hardening`; the old draft PR #1 is therefore an ancestor-only change relative to the roadmap branch. Do not merge PR #1 separately into main in a way that conflicts with the planned full integration. When v1.0 is genuinely ready, open/refresh a PR from the roadmap branch, confirm its CI and mergeability, then merge once the owner is comfortable with the scope.
+- Current state remains **pre-v1.0**. A passing CI run validates only the implemented tests, not real-world app compatibility. Bundled dylib loading/export-trie lookup, full instruction coverage, full syscalls/runtime behavior, and end-to-end real Mach-O fixtures remain incomplete.
