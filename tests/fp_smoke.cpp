@@ -29,14 +29,16 @@ static float as_float(uint64_t bits) {
 }
 
 int main() {
-    alignas(4) uint8_t code[36]{};
+    alignas(4) uint8_t code[44]{};
     put32(code + 0, 0x1E222820); // fadd s0, s1, s2
     put32(code + 4, 0x1E212000); // fcmp s0, s1
     put32(code + 8, 0x1E204003); // fmov s3, s0
     put32(code + 12, 0x1E6628A4); // fadd d4, d5, d6
     put32(code + 16, 0x1E652080); // fcmp d4, d5
     put32(code + 20, 0x1E604087); // fmov d7, d4
-    put32(code + 24, 0x1E2E1008); // fmov s8, #1.0\n    put32(code + 28, 0x1E701009); // fmov d9, #-2.0\n    put32(code + 32, 0x0B020020); // add w0, w1, w2
+    put32(code + 24, 0x1E2E1008); // fmov s8, #1.0\n    put32(code + 28, 0x1E701009); // fmov d9, #-2.0\n    put32(code + 32, 0x1E26000A); // fmov w10, s0
+    put32(code + 36, 0x9E66008D); // fmov x13, d4
+    put32(code + 40, 0x0B020020); // add w0, w1, w2
 
     LoadedBinary binary{};
     Segment text{};
@@ -70,7 +72,11 @@ int main() {
     assert(interpreter.step());
     assert(as_double(state.q[7][0]) == 3.75);
     assert(interpreter.step());
+    assert(state.x[10] == fbits(3.75f));
+    assert(interpreter.step());
+    assert(state.x[13] == dbits(3.75));
+    assert(interpreter.step());
     assert(state.x[0] == 1); // W-register arithmetic wraps to 32 bits, then zero-extends
-    assert(state.pc == 0x1024);
+    assert(state.pc == 0x102c);
     return 0;
 }
