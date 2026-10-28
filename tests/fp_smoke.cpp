@@ -29,7 +29,7 @@ static float as_float(uint64_t bits) {
 }
 
 int main() {
-    alignas(4) uint8_t code[76]{};
+    alignas(4) uint8_t code[112]{};
     put32(code + 0,  0x1E222820); // fadd s0, s1, s2
     put32(code + 4,  0x1E212000); // fcmp s0, s1
     put32(code + 8,  0x1E204003); // fmov s3, s0
@@ -49,6 +49,10 @@ int main() {
     put32(code + 64, 0x1E62408C); // fcvt s12, d4
     put32(code + 68, 0x1E22C18D); // fcvt d13, s12
     put32(code + 72, 0x1E212010); // fcmpe s0, s1
+    put32(code + 76, 0xBD00002E); // str s14, [x1]
+    put32(code + 80, 0xBD400030); // ldr s16, [x1]
+    put32(code + 84, 0xFD00042F); // str d15, [x1, #8]
+    put32(code + 88, 0xFD400431); // ldr d17, [x1, #8]
 
     LoadedBinary binary{};
     Segment text{};
@@ -110,6 +114,16 @@ int main() {
     assert(interpreter.step());
     assert(!state.n && !state.z && state.c && state.v);
     assert(state.pc == 0x104C);
+
+    // S/D loads and stores use the mapped guest image rather than arbitrary host pointers.
+    state.x[1] = 0x1000 + 96;
+    assert(interpreter.step());
+    assert(interpreter.step());
+    assert(as_float(state.q[16][0]) == -3.75f);
+    assert(interpreter.step());
+    assert(interpreter.step());
+    assert(as_double(state.q[17][0]) == 3.75);
+    assert(state.pc == 0x105C);
 
     alignas(4) uint8_t unsupported[4]{};
     put32(unsupported, 0x1E80F000);
