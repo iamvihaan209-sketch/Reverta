@@ -433,7 +433,14 @@ void Interpreter::execute_data_proc(const Arm64Insn& insn) {
 
     case Arm64Op::LSL_IMM: write_result(insn.rd, rn << insn.imm); break;
     case Arm64Op::LSR_IMM: write_result(insn.rd, rn >> insn.imm); break;
-    case Arm64Op::ASR_IMM: write_result(insn.rd, (int64_t)rn >> insn.imm); break;
+    case Arm64Op::ASR_IMM:
+        if (insn.is64) {
+            write_result(insn.rd, static_cast<uint64_t>(static_cast<int64_t>(rn) >> insn.imm));
+        } else {
+            write_result(insn.rd, static_cast<uint32_t>(
+                static_cast<int32_t>(static_cast<uint32_t>(rn)) >> insn.imm));
+        }
+        break;
 
     case Arm64Op::NOP:
         break;
