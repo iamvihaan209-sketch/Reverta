@@ -27,6 +27,9 @@ struct LoadedBinary {
     uint64_t base_address = 0;    // slide applied to preferred virtual addresses
     uint64_t stack_top = 0;       // initial stack pointer
     std::vector<std::string> dylibs;
+    std::vector<std::string> rpaths;
+    std::string path;
+    uint32_t filetype = 0;
     std::vector<uint8_t> image_data;
     bool is_pie = false;
 };
@@ -38,7 +41,7 @@ public:
 
     // Load a 64-bit ARM64 Mach-O executable or a universal binary containing
     // an ARM64 slice. Returns nullopt and sets error() on malformed input.
-    std::optional<LoadedBinary> load(const std::string& path);
+    std::optional<LoadedBinary> load(const std::string& path, uint64_t slide_override = 0);
 
     const std::string& error() const { return error_msg_; }
 
@@ -47,7 +50,7 @@ public:
 
 private:
     bool parse_load_commands(const uint8_t* data, size_t size, LoadedBinary& binary);
-    bool map_segments(const uint8_t* data, size_t size, LoadedBinary& binary);
+    bool map_segments(const uint8_t* data, size_t size, LoadedBinary& binary, uint64_t slide_override);
     bool setup_stack(LoadedBinary& binary, int argc, const char** argv);
 
     std::string error_msg_;
