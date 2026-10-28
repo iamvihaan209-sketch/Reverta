@@ -166,3 +166,11 @@ Changes committed after the initial handoff:
 - Added a synthetic integration test that writes two fake `MH_DYLIB` files, loads one by absolute path and one through `@rpath`, and verifies both export addresses at distinct guest slides.
 - Latest verified CI run #90 at commit `3cc5a06c` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40772849504
 - Still not v0.6 complete: no real framework/app has been run; weak missing dependencies, all dyld runpath-stack rules, re-export terminals, chained formats beyond the supported subset, shared-cache layouts, symbol versioning and all ABI details are not complete. Dependency loading is only validated with synthetic Mach-O fixtures.
+
+
+### Nested dylib graph + entry point correctness
+- The loader now distinguishes `LC_MAIN` file offsets from `LC_UNIXTHREAD` preferred guest PCs. `LC_MAIN` offsets are translated through the segment containing that file offset; thread-state PCs receive the slide directly. Both paths have synthetic regression tests.
+- Added recursive dylib graph coverage: a parent `MH_DYLIB` with `LC_RPATH @loader_path/Children` imports a child via `@rpath/libchild.dylib`. The test confirms both exports resolve at distinct guest slides.
+- Dependency path resolution carries inherited runpaths through nested dependencies, validates load-command string offsets, and preserves the first loaded definition for duplicate export names.
+- Latest CI run #95 at commit `ece4aa6e` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40773367505
+- This is synthetic-fixture coverage only; real framework loading and application startup remain unverified.
