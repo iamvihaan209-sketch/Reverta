@@ -814,9 +814,15 @@ bool DyldLinker::load_dependency(
     const auto child_dependencies = binary.dylibs;
     const auto child_rpaths = binary.rpaths;
     loaded_binaries_.push_back(std::move(binary));
+    std::vector<std::string> inherited_rpaths = child_rpaths;
+    for (const auto& parent_rpath : loader_rpaths) {
+        if (std::find(inherited_rpaths.begin(), inherited_rpaths.end(), parent_rpath) ==
+            inherited_rpaths.end())
+            inherited_rpaths.push_back(parent_rpath);
+    }
     for (const auto& child : child_dependencies) {
         if (!load_dependency(child, resolved, executable_path,
-                             child_rpaths, executable_rpaths, depth + 1)) {
+                             inherited_rpaths, executable_rpaths, depth + 1)) {
             loading_paths_.erase(resolved);
             return false;
         }
