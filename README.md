@@ -19,7 +19,7 @@ The opposite of Apple's Rosetta 2.
 | 5 | AppKit stubs (NSApplication, NSWindow, NSView, NSAlert) | ✅ |
 | 5 | Dylib interceptor (routes ARM64 dylib calls to host stubs) | ✅ |
 | 3 | Dynamic linker (classic binds/rebases, selected chained formats, exports, absolute/@rpath and nested dylib loading) | 🟡 |
-| 0.7 | Scalar FP subset (arithmetic, compare, FABS/FNEG, FCVT, FMOV) | 🟡 |
+| 0.7 | Scalar FP subset (arithmetic, compare, FABS/FNEG, FCVT, FMOV, S/D loads/stores) | 🟡 |
 
 ## Build
 
