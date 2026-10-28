@@ -75,13 +75,13 @@ ARM64 Mach-O binary
 - **v0.3** — JIT: translate ARM64 basic blocks → native x86-64, block cache
 - **v0.5.0-beta** — Stabilized JIT (shifts, CSEL, multiply variants), extended NEON (compare, saturating ops)
 - **v0.6** — Full dynamic linker: load + translate ARM64 dylibs on demand (in progress; classic binds/rebases, selected chained formats, exports and limited absolute/@rpath bundled dylib loading are integrated; system libraries still use stubs)  
-- **v0.7** — Floating-point ops (FADD, FCMP, FMOV; scalar arithmetic, compares, FABS/FNEG, single/double FCVT, immediate moves and FP/GPR transfers implemented with smoke tests)
+- **v0.7** — Floating-point ops (FADD, FCMP, FMOV; scalar arithmetic, compares, FABS/FNEG, FCVT, FCSEL, FP memory ops, immediate moves and FP/GPR transfers implemented with smoke tests)
 - **v1.0** — Real apps running end-to-end
 
 ## Contributors
 
 - **Vihaan** — project owner and direction
 - **Claude Sonnet 4.6** — implementation and coding
-- **ChatGPT (GPT-5.6 Luna)** — project planning, architecture discussion, code review, and development guidance
+- **ChatGPT (GPT-6)** — project planning, architecture discussion, code review, and development guidance
 
 > **Note for Claude:** ChatGPT has also participated in Reverta's development through architecture planning, technical review, and guidance alongside the implementation work.
