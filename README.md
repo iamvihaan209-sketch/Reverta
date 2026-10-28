@@ -18,7 +18,7 @@ The opposite of Apple's Rosetta 2.
 | 5 | Foundation / CoreFoundation stubs (CFString, CFData, CFArray, ...) | ✅ |
 | 5 | AppKit stubs (NSApplication, NSWindow, NSView, NSAlert) | ✅ |
 | 5 | Dylib interceptor (routes ARM64 dylib calls to host stubs) | ✅ |
-| 3 | Dynamic linker (classic binds/rebases, selected chained formats, exports, absolute/@rpath dylib loading) | 🟡 |
+| 3 | Dynamic linker (classic binds/rebases, selected chained formats, exports, absolute/@rpath and nested dylib loading) | 🟡 |
 | 0.7 | Scalar FP subset (arithmetic, compare, FABS/FNEG, FMOV immediate/register/GPR) | 🟡 |
 
 ## Build
