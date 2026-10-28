@@ -11,6 +11,19 @@
 #include <sys/mman.h>
 
 namespace {
+bool add_signed_checked(uint64_t base, int64_t delta, uint64_t& result) {
+    if (delta >= 0) {
+        const uint64_t amount = static_cast<uint64_t>(delta);
+        if (base > UINT64_MAX - amount) return false;
+        result = base + amount;
+        return true;
+    }
+    const uint64_t amount = static_cast<uint64_t>(-(delta + 1)) + 1;
+    if (base < amount) return false;
+    result = base - amount;
+    return true;
+}
+
 bool read_uleb128(const uint8_t*& p, const uint8_t* end, uint64_t& value) {
     value = 0;
     unsigned shift = 0;
@@ -62,7 +75,7 @@ bool DyldLinker::is_system_dylib(const std::string& path) {
 
 void DyldLinker::register_dylib(LoadedDylib lib) {
     for (auto& [name, sym] : lib.exports)
-        symbol_map_[name] = sym.value;
+        symbol_map_.emplace(name, sym.value);
     dylibs_.push_back(std::move(lib));
 }
 
@@ -273,7 +286,11 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
             }
             const GuestPtr resolved = resolve_symbol(sym_name);
             if (!resolved) return false;
-            const GuestPtr value = resolved + static_cast<uint64_t>(addend);
+            GuestPtr value = 0;
+            if (!add_signed_checked(resolved, addend, value)) {
+                std::fprintf(stderr, "[dyld] bind addend overflows symbol address: %s\\n", sym_name.c_str());
+                return false;
+            }
             std::memcpy(host, &value, sizeof(value));
             return true;
         };
@@ -526,9 +543,10 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
                         const int8_t pointer_addend = static_cast<int8_t>((value >> 24) & 0xff);
                         const GuestPtr resolved = resolve_symbol(import_names[ordinal]);
                         if (!resolved) return false;
-                        const uint64_t bound = resolved +
-                            static_cast<uint64_t>(import_addends[ordinal]) +
-                            static_cast<uint64_t>(static_cast<int64_t>(pointer_addend));
+                        uint64_t bound = 0;
+                        if (!add_signed_checked(resolved, import_addends[ordinal], bound) ||
+                            !add_signed_checked(bound, static_cast<int64_t>(pointer_addend), bound))
+                            return false;
                         std::memcpy(slot, &bound, sizeof(bound));
                     } else {
                         uint64_t target = value & ((uint64_t{1} << 36) - 1);
