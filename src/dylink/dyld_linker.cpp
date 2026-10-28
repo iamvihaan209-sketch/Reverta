@@ -47,7 +47,13 @@ bool read_sleb128(const uint8_t*& p, const uint8_t* end, int64_t& value) {
         byte = *p++;
         const uint8_t payload = byte & 0x7f;
         if (shift == 63 && payload != 0 && payload != 0x7f) return false;
-        if (shift < 64) bits |= static_cast<uint64_t>(payload) << shift;
+        if (shift < 63) {
+            bits |= static_cast<uint64_t>(payload) << shift;
+        } else if (shift == 63) {
+            bits |= static_cast<uint64_t>(payload & 1) << 63;
+        } else if (payload != 0 && payload != 0x7f) {
+            return false;
+        }
         shift += 7;
         if ((byte & 0x80) == 0) {
             if (shift < 64 && (byte & 0x40)) bits |= (~uint64_t{0}) << shift;
