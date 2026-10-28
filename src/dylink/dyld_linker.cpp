@@ -726,7 +726,7 @@ bool DyldLinker::load_dependency(
     const std::string& executable_path,
     const std::vector<std::string>& loader_rpaths,
     const std::vector<std::string>& executable_rpaths,
-    size_t depth) {
+    bool weak, size_t depth) {
     if (depth > 64) {
         std::fprintf(stderr, "[dyld] dependency nesting limit exceeded at %s\n",
                      install_name.c_str());
@@ -786,6 +786,11 @@ bool DyldLinker::load_dependency(
         }
     }
     if (resolved.empty()) {
+        if (weak) {
+            std::fprintf(stderr, "[dyld] optional weak dependency is absent: %s\n",
+                         install_name.c_str());
+            return true;
+        }
         std::fprintf(stderr, "[dyld] cannot resolve bundled dependency path: %s\n",
                      install_name.c_str());
         return false;
@@ -846,7 +851,14 @@ bool DyldLinker::load_dependency(
     }
     for (const auto& child : child_dependencies) {
         if (!load_dependency(child, resolved, executable_path,
-                             inherited_rpaths, executable_rpaths, depth + 1)) {
+                             inherited_rpaths, executable_rpaths, false, depth + 1)) {
+            loading_paths_.erase(resolved);
+            return false;
+        }
+    }
+    for (const auto& child : loaded_binaries_.back().weak_dylibs) {
+        if (!load_dependency(child, resolved, executable_path,
+                             inherited_rpaths, executable_rpaths, true, depth + 1)) {
             loading_paths_.erase(resolved);
             return false;
         }
@@ -861,11 +873,17 @@ bool DyldLinker::link(const uint8_t* data, size_t size,
                       uint64_t slide,
                       const std::vector<std::string>& required_dylibs,
                       const std::string& executable_path,
-                      const std::vector<std::string>& executable_rpaths) {
+                      const std::vector<std::string>& executable_rpaths,
+                      const std::vector<std::string>& weak_dylibs) {
     if (!parse_exports(data, size, slide)) return false;
     for (const auto& path : required_dylibs) {
         if (!load_dependency(path, executable_path, executable_path,
-                             executable_rpaths, executable_rpaths, 0))
+                             executable_rpaths, executable_rpaths, false, 0))
+            return false;
+    }
+    for (const auto& path : weak_dylibs) {
+        if (!load_dependency(path, executable_path, executable_path,
+                             executable_rpaths, executable_rpaths, true, 0))
             return false;
     }
 
