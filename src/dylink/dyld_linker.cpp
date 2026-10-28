@@ -643,7 +643,8 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
             if (kind > 2) {
                 active.erase(offset);
                 return false;
-            }\n            if (kind == 1) {
+            }
+            if (kind == 1) {
                 active.erase(offset);
                 std::fprintf(stderr, "[dyld] thread-local export is unsupported: %s\n",
                              prefix.c_str());
