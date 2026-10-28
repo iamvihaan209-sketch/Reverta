@@ -94,5 +94,12 @@ int main() {
     assert(interpreter.step());
     assert(!state.n && !state.z && state.c && state.v);
     assert(state.pc == 0x1038);
+
+    // An unsupported scalar FP encoding must not be misidentified as an implemented op.
+    alignas(4) uint8_t unsupported[4]{};
+    put32(unsupported, 0x1E20F000);
+    Arm64Decoder decoder;
+    const Arm64Insn unknown = decoder.decode(unsupported, 0x2000);
+    assert(unknown.op == Arm64Op::UNKNOWN);
     return 0;
 }
