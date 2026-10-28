@@ -77,6 +77,16 @@ int main() {
     assert(result == RunResult::OK);
     assert(observed_x0 == 42);
 
+    const int64_t guest_map = interpreter.mmap_guest(
+        0, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    assert(guest_map > 0);
+    uint8_t* mapped = interpreter.guest_to_host(static_cast<uint64_t>(guest_map), 16);
+    assert(mapped != nullptr);
+    mapped[0] = 0x5a;
+    assert(interpreter.guest_to_host(static_cast<uint64_t>(guest_map) + 15, 2) == nullptr);
+    assert(interpreter.munmap_guest(static_cast<uint64_t>(guest_map), 4096) == 0);
+    assert(interpreter.guest_to_host(static_cast<uint64_t>(guest_map), 1) == nullptr);
+
     for (const auto& segment : loaded->segments)
         if (segment.mapped && segment.vmsize)
             ::munmap(segment.mapped, static_cast<size_t>(segment.vmsize));
