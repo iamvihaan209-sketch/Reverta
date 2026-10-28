@@ -9,7 +9,7 @@ The opposite of Apple's Rosetta 2.
 |-------|---------|--------|
 | 1 | ARM64 Mach-O loader (static + fat binaries) | ✅ |
 | 1 | AArch64 instruction decoder (expanded: shifts, conditional select, multiply) | ✅ |
-| 1 | Interpreter (branches, load/store, data processing, flags) | ✅ |
+| 1 | Interpreter (partial branches/load-store/integer semantics; full instruction coverage pending) | 🟡 |
 | 1 | Syscall translation (exit, read, write, open, mmap, ...) | ✅ |
 | 2 | JIT compiler (basic blocks: MOV, ADD/SUB, logic, shifts, CSEL, MUL) | ✅ |
 | 4 | NEON/SIMD (extended: compare, min/max, saturating arith) | ✅ |
@@ -18,7 +18,7 @@ The opposite of Apple's Rosetta 2.
 | 5 | Foundation / CoreFoundation stubs (CFString, CFData, CFArray, ...) | ✅ |
 | 5 | AppKit stubs (NSApplication, NSWindow, NSView, NSAlert) | ✅ |
 | 5 | Dylib interceptor (routes ARM64 dylib calls to host stubs) | ✅ |
-| 3 | Dynamic linker (classic binds + selected chained pointer formats; bundled dylibs pending) | 🟡 |
+| 3 | Dynamic linker (classic rebases/binds + selected chained pointer formats; bundled dylibs pending) | 🟡 |
 | 0.7 | Scalar FP subset (FADD/FSUB/FMUL/FDIV/FCMP/FMOV register) | 🟡 |
 
 ## Build
