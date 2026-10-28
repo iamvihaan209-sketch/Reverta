@@ -347,63 +347,93 @@ void Interpreter::execute_fp(const Arm64Insn& insn) {
 
 // ── Data processing execution ─────────────────────────────────────────────────
 void Interpreter::execute_data_proc(const Arm64Insn& insn) {
-    uint64_t rn = state_.reg(insn.rn);
-    uint64_t rm = state_.reg(insn.rm);
+    const uint64_t width_mask = insn.is64 ? UINT64_MAX : 0xffffffffULL;
+    const uint64_t rn = state_.reg(insn.rn) & width_mask;
+    const uint64_t rm = state_.reg(insn.rm) & width_mask;
+    const auto write_result = [&](uint8_t rd, uint64_t value) {
+        state_.set_reg(rd, value & width_mask);
+    };
+    const auto add_flags = [&](uint64_t a, uint64_t b, uint64_t result) {
+        if (insn.is64) {
+            update_flags_add(a, b, result);
+        } else {
+            const uint32_t aa = static_cast<uint32_t>(a);
+            const uint32_t bb = static_cast<uint32_t>(b);
+            const uint32_t rr = static_cast<uint32_t>(result);
+            state_.n = (rr >> 31) != 0;
+            state_.z = rr == 0;
+            state_.c = (static_cast<uint64_t>(aa) + bb) > UINT32_MAX;
+            state_.v = ((~(aa ^ bb) & (aa ^ rr)) >> 31) != 0;
+        }
+    };
+    const auto sub_flags = [&](uint64_t a, uint64_t b, uint64_t result) {
+        if (insn.is64) {
+            update_flags_sub(a, b, result);
+        } else {
+            const uint32_t aa = static_cast<uint32_t>(a);
+            const uint32_t bb = static_cast<uint32_t>(b);
+            const uint32_t rr = static_cast<uint32_t>(result);
+            state_.n = (rr >> 31) != 0;
+            state_.z = rr == 0;
+            state_.c = aa >= bb;
+            state_.v = (((aa ^ bb) & (aa ^ rr)) >> 31) != 0;
+        }
+    };
 
     switch (insn.op) {
     case Arm64Op::MOV_REG:
-        state_.set_reg(insn.rd, rm);
+        write_result(insn.rd, rm);
         break;
     case Arm64Op::MOV_IMM:
-        state_.set_reg(insn.rd, (uint64_t)insn.imm);
+        write_result(insn.rd, (uint64_t)insn.imm);
         break;
 
     case Arm64Op::ADD_REG: {
         uint64_t res = rn + rm;
-        if (insn.set_flags) update_flags_add(rn, rm, res);
-        state_.set_reg(insn.rd, res);
+        if (insn.set_flags) add_flags(rn, rm, res);
+        write_result(insn.rd, res);
         break;
     }
     case Arm64Op::ADD_IMM: {
         uint64_t res = rn + (uint64_t)insn.imm;
-        if (insn.set_flags) update_flags_add(rn, (uint64_t)insn.imm, res);
-        state_.set_reg(insn.rd, res);
+        if (insn.set_flags) add_flags(rn, static_cast<uint64_t>(insn.imm) & width_mask, res);
+        write_result(insn.rd, res);
         break;
     }
     case Arm64Op::SUB_REG: {
         uint64_t res = rn - rm;
-        if (insn.set_flags) update_flags_sub(rn, rm, res);
-        state_.set_reg(insn.rd, res);
+        if (insn.set_flags) sub_flags(rn, rm, res);
+        write_result(insn.rd, res);
         break;
     }
     case Arm64Op::SUB_IMM: {
         uint64_t b = (uint64_t)insn.imm;
         uint64_t res = rn - b;
-        if (insn.set_flags) update_flags_sub(rn, b, res);
-        state_.set_reg(insn.rd, res);
+        if (insn.set_flags) sub_flags(rn, b & width_mask, res);
+        write_result(insn.rd, res);
         break;
     }
     case Arm64Op::CMP_REG:
-        update_flags_sub(rn, rm, rn - rm);
+        sub_flags(rn, rm, rn - rm);
         break;
     case Arm64Op::CMP_IMM:
-        update_flags_sub(rn, (uint64_t)insn.imm, rn - (uint64_t)insn.imm);
+        sub_flags(rn, static_cast<uint64_t>(insn.imm) & width_mask, rn - (static_cast<uint64_t>(insn.imm) & width_mask));
         break;
 
     case Arm64Op::MUL:
-        state_.set_reg(insn.rd, rn * rm);
+        write_result(insn.rd, rn * rm);
         break;
 
-    case Arm64Op::AND_REG: state_.set_reg(insn.rd, rn & rm); break;
-    case Arm64Op::AND_IMM: state_.set_reg(insn.rd, rn & (uint64_t)insn.imm); break;
-    case Arm64Op::ORR_REG: state_.set_reg(insn.rd, rn | rm); break;
-    case Arm64Op::ORR_IMM: state_.set_reg(insn.rd, rn | (uint64_t)insn.imm); break;
-    case Arm64Op::EOR_REG: state_.set_reg(insn.rd, rn ^ rm); break;
-    case Arm64Op::EOR_IMM: state_.set_reg(insn.rd, rn ^ (uint64_t)insn.imm); break;
+    case Arm64Op::AND_REG: write_result(insn.rd, rn & rm); break;
+    case Arm64Op::AND_IMM: write_result(insn.rd, rn & (uint64_t)insn.imm); break;
+    case Arm64Op::ORR_REG: write_result(insn.rd, rn | rm); break;
+    case Arm64Op::ORR_IMM: write_result(insn.rd, rn | (uint64_t)insn.imm); break;
+    case Arm64Op::EOR_REG: write_result(insn.rd, rn ^ rm); break;
+    case Arm64Op::EOR_IMM: write_result(insn.rd, rn ^ (uint64_t)insn.imm); break;
 
-    case Arm64Op::LSL_IMM: state_.set_reg(insn.rd, rn << insn.imm); break;
-    case Arm64Op::LSR_IMM: state_.set_reg(insn.rd, rn >> insn.imm); break;
-    case Arm64Op::ASR_IMM: state_.set_reg(insn.rd, (int64_t)rn >> insn.imm); break;
+    case Arm64Op::LSL_IMM: write_result(insn.rd, rn << insn.imm); break;
+    case Arm64Op::LSR_IMM: write_result(insn.rd, rn >> insn.imm); break;
+    case Arm64Op::ASR_IMM: write_result(insn.rd, (int64_t)rn >> insn.imm); break;
 
     case Arm64Op::NOP:
         break;
