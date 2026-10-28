@@ -342,6 +342,14 @@ int main() {
                        {"@executable_path/Frameworks"}));
     assert(linker.resolve_symbol("_parent") == 0x1300000020ULL);
     assert(linker.resolve_symbol("_child") == 0x1400000020ULL);
+
+    // An absent weak dependency is optional; an absent strong dependency remains fatal.
+    assert(linker.link(export_image.data(), export_image.size(), 0x1000, {},
+                       "/tmp/reverta-main", {},
+                       {"/tmp/reverta-weak-dependency-that-is-not-installed.dylib"}));
+    assert(!linker.link(export_image.data(), export_image.size(), 0x1000,
+                        {"/tmp/reverta-strong-dependency-that-is-not-installed.dylib"},
+                        "/tmp/reverta-main", {}));
     ::unlink(parent_path.c_str());
     ::unlink(child_path.c_str());
     ::rmdir(nested_children.c_str());
