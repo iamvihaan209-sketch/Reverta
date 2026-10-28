@@ -76,6 +76,8 @@ int main() {
     const RunResult result = interpreter.run();
     assert(result == RunResult::OK);
     assert(observed_x0 == 42);
+    assert(interpreter.guest_to_host(loaded->entry_point, 4, GuestAccess::Execute) != nullptr);
+    assert(interpreter.guest_to_host(loaded->entry_point, 4, GuestAccess::Write) == nullptr);
 
     const int64_t guest_map = interpreter.mmap_guest(
         0, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -85,6 +87,12 @@ int main() {
     mapped[0] = 0x5a;
     assert(interpreter.guest_to_host(static_cast<uint64_t>(guest_map) + 4095, 2, GuestAccess::Read) == nullptr);
     assert(interpreter.munmap_guest(static_cast<uint64_t>(guest_map), 4096) == 0);
+    const int64_t read_only_map = interpreter.mmap_guest(
+        0, 4096, PROT_READ, MAP_PRIVATE | MAP_ANON, -1, 0);
+    assert(read_only_map > 0);
+    assert(interpreter.guest_to_host(static_cast<uint64_t>(read_only_map), 1, GuestAccess::Read) != nullptr);
+    assert(interpreter.guest_to_host(static_cast<uint64_t>(read_only_map), 1, GuestAccess::Write) == nullptr);
+    assert(interpreter.munmap_guest(static_cast<uint64_t>(read_only_map), 4096) == 0);
     assert(interpreter.guest_to_host(static_cast<uint64_t>(guest_map), 1, GuestAccess::Read) == nullptr);
 
     for (const auto& segment : loaded->segments)
