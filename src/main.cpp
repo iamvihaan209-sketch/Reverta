@@ -4,6 +4,7 @@
 #include "interpreter/interpreter.h"
 #include "syscall/syscall_translator.h"
 #include "dylib/dylib_interceptor.h"
+#include "dylink/dyld_linker.h"
 
 static void usage(const char* prog) {
     std::fprintf(stderr, "Usage: %s <arm64-macho-binary> [args...]\n\n", prog);
@@ -41,6 +42,33 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[reverta] Dylibs (intercepted via stubs):\n");
         for (auto& d : binary.dylibs)
             std::fprintf(stderr, "  %s\n", d.c_str());
+    }
+
+    // ── Link imports before restoring segment protections ──────────────────────
+    DyldLinker& linker = DyldLinker::instance();
+    if (!linker.link(binary.image_data.data(), binary.image_data.size(),
+                     binary.base_address, binary.dylibs)) {
+        std::fprintf(stderr, "[reverta] Dynamic dependency loading failed; see dyld diagnostics above\n");
+        return 1;
+    }
+    const auto guest_to_host_for_fixup = [&](uint64_t address) -> uint8_t* {
+        for (const auto& seg : binary.segments) {
+            const uint64_t base = seg.mapped_vmaddr ? seg.mapped_vmaddr : seg.vmaddr;
+            if (!seg.mapped || address < base) continue;
+            const uint64_t offset = address - base;
+            if (offset <= seg.vmsize && seg.vmsize - offset >= sizeof(uint64_t))
+                return seg.mapped + offset;
+        }
+        return nullptr;
+    };
+    if (!linker.apply_fixups(binary.image_data.data(), binary.image_data.size(),
+                             binary.base_address, guest_to_host_for_fixup)) {
+        std::fprintf(stderr, "[reverta] Import fixups failed or use an unsupported format\n");
+        return 1;
+    }
+    if (!loader.finalize_protections(binary)) {
+        std::fprintf(stderr, "[reverta] Protection setup failed: %s\n", loader.error().c_str());
+        return 1;
     }
 
     // ── Set up interpreter ────────────────────────────────────────────────────
