@@ -447,6 +447,7 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
             const auto* seg = reinterpret_cast<const segment_command_64*>(cursor);
             if (seg->vmaddr > UINT64_MAX - slide) return false;
             const uint64_t guest_base = seg->vmaddr + slide;
+            if (seg->vmsize > UINT64_MAX - guest_base) return false;
             segment_vmaddrs.push_back(guest_base);
             segment_vmsizes.push_back(seg->vmsize);
             if (std::strncmp(seg->segname, "__TEXT", sizeof(seg->segname)) == 0)
@@ -523,13 +524,15 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
                         const int8_t pointer_addend = static_cast<int8_t>((value >> 24) & 0xff);
                         const GuestPtr resolved = resolve_symbol(import_names[ordinal]);
                         if (!resolved) return false;
-                        const uint64_t bound = resolved + static_cast<uint64_t>(
-                            import_addends[ordinal] + pointer_addend);
+                        const uint64_t bound = resolved +
+                            static_cast<uint64_t>(import_addends[ordinal]) +
+                            static_cast<uint64_t>(static_cast<int64_t>(pointer_addend));
                         std::memcpy(slot, &bound, sizeof(bound));
                     } else {
                         uint64_t target = value & ((uint64_t{1} << 36) - 1);
                         if (pointer_format == 2) {
                             target |= ((value >> 36) & 0xff) << 56;
+                            if (target > UINT64_MAX - slide) return false;
                             target += slide;
                         } else {
                             if (target > UINT64_MAX - image_base) return false;
