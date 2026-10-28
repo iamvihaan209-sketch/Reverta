@@ -173,6 +173,11 @@ Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
     default: break;
     }
 
+    if ((insn & 0xFF200C00) == 0x1E200C00) {
+        out.op = Arm64Op::FCSEL;
+        out.cond = static_cast<Arm64Cond>(bits(insn, 15, 12));
+        return out;
+    }
     if ((insn & 0xFFBFFC00) == 0x1E224000) {
         out.op = Arm64Op::FCVT_SD;
         out.is64 = false;
