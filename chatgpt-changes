@@ -180,3 +180,11 @@ Changes committed after the initial handoff:
 - Added scalar `FCVT S,D` and `FCVT D,S` decode/execute paths, with conversion smoke tests that round-trip a value through the single-precision register form.
 - Latest CI run #102 at commit `bd703f62` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40773642241
 - The scalar FP subset remains incomplete: FP memory loads/stores, integer/FP conversion forms, rounding-mode and exception fidelity, and vector/SIMD operations remain outstanding.
+
+
+### v0.7 scalar FP memory operations + memory safety
+- Added scalar `LDR S/D` and `STR S/D` unsigned-immediate forms, storing/reading the FP register bank instead of accidentally treating FP registers as X/W registers.
+- Extended `tests/fp_smoke.cpp` to store/load single and double values through mapped guest memory and verify register contents.
+- Loader/interpreter now track guest stack base/size, translate only in-range segment/stack accesses, and report unmapped/out-of-range loads/stores as faults instead of dereferencing arbitrary host pointers.
+- Added regression coverage for invalid guest loads. CI run #105 at commit `edeb44c2` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40774309364
+- Remaining memory limitations: access permissions are not enforced on every guest read/write; memory-mapped file/syscall semantics and unaligned edge cases still need broader tests. FP byte/half and vector loads/stores remain unsupported.
