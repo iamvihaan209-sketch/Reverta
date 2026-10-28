@@ -53,7 +53,7 @@ public:
     const CpuState& state() const { return state_; }
 
     // Translate guest virtual address to host pointer (nullptr if unmapped)
-    uint8_t* guest_to_host(uint64_t vaddr) const;
+    uint8_t* guest_to_host(uint64_t vaddr, size_t access_size = 1) const;
 
 private:
     void execute(const Arm64Insn& insn);
@@ -71,4 +71,5 @@ private:
     Arm64Decoder decoder_;
     SyscallHandler syscall_handler_;
     bool running_ = false;
+    bool faulted_ = false;
 };
