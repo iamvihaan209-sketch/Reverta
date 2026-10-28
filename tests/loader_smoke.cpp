@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <vector>
 #include <fcntl.h>
 #include <unistd.h>
