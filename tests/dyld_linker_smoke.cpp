@@ -268,6 +268,25 @@ int main() {
     std::memcpy(&patched, guest_memory + 8, sizeof(patched));
     assert(patched == linker.resolve_symbol("_test_import"));
 
+    // Weak imports may resolve to zero when no implementation is present.
+    const std::vector<uint8_t> weak_binds = {
+        0x41, '_','w','e','a','k','_','m','i','s','s','i','n','g',0,
+        0x70, 0x08, 0x90, 0x00
+    };
+    auto weak_image = make_macho(weak_binds);
+    std::memset(guest_memory + 8, 0xff, sizeof(uint64_t));
+    assert(linker.apply_fixups(weak_image.data(), weak_image.size(), 0, translate));
+    std::memcpy(&patched, guest_memory + 8, sizeof(patched));
+    assert(patched == 0);
+
+    const std::vector<uint8_t> strong_missing_binds = {
+        0x40, '_','s','t','r','o','n','g','_','m','i','s','s','i','n','g',0,
+        0x70, 0x08, 0x90, 0x00
+    };
+    auto strong_missing_image = make_macho(strong_missing_binds);
+    assert(!linker.apply_fixups(strong_missing_image.data(), strong_missing_image.size(),
+                                0, translate));
+
     // Signed bind addends are applied without unsigned wraparound.
     const std::vector<uint8_t> negative_addend_bind = {
         0x40, '_','t','e','s','t','_','i','m','p','o','r','t',0,
