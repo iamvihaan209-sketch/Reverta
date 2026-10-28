@@ -55,8 +55,10 @@ static std::vector<uint8_t> make_macho(const std::vector<uint8_t>& binds,
     di->rebase_size = static_cast<uint32_t>(rebases.size());
     di->bind_off = static_cast<uint32_t>(payload_off + rebases.size());
     di->bind_size = static_cast<uint32_t>(binds.size());
-    std::memcpy(image.data() + payload_off, rebases.data(), rebases.size());
-    std::memcpy(image.data() + di->bind_off, binds.data(), binds.size());
+    if (!rebases.empty())
+        std::memcpy(image.data() + payload_off, rebases.data(), rebases.size());
+    if (!binds.empty())
+        std::memcpy(image.data() + di->bind_off, binds.data(), binds.size());
     return image;
 }
 
