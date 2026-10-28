@@ -29,7 +29,7 @@ enum class Arm64Op {
     CSEL, CSNEG, CSINC,
     // Floating point
     FADD, FSUB, FMUL, FDIV, FABS, FNEG, FCVT_SD, FCVT_DS,
-    FCMP, FCMPE,
+    FCMP, FCMPE, FCSEL,
     FMOV, FMOV_IMM, FMOV_TO_GPR, FMOV_FROM_GPR,
     // Load/Store
     LDR_REG, LDR_IMM,
