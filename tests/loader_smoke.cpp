@@ -82,7 +82,7 @@ int main() {
         auto loaded = executable_loader.load(executable_path, 0x1000);
         ::unlink(executable_path);
         assert(loaded.has_value());
-        assert(loaded->entry_point == 0x100001000ULL + 4);
+        assert(loaded->entry_point == 0x100000000ULL + 0x1000 + text_fileoff + 4);
         for (const auto& mapped : loaded->segments)
             if (mapped.mapped && mapped.vmsize)
                 ::munmap(mapped.mapped, static_cast<size_t>(mapped.vmsize));
