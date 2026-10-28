@@ -103,7 +103,7 @@ int main() {
     // LC_UNIXTHREAD carries a preferred virtual PC, not a file offset.
     {
         const size_t header_size = sizeof(mach_header_64);
-        const size_t command_size = sizeof(segment_command_64) + 16 + ARM_THREAD_STATE64_COUNT * sizeof(uint32_t);
+        const size_t command_size = sizeof(segment_command_64) + 16 + 68 * sizeof(uint32_t);
         const size_t image_size = header_size + command_size + 16;
         std::vector<uint8_t> executable(image_size, 0);
         auto* eh = reinterpret_cast<mach_header_64*>(executable.data());
@@ -128,8 +128,8 @@ int main() {
         thread->cmdsize = static_cast<uint32_t>(16 + ARM_THREAD_STATE64_COUNT * sizeof(uint32_t));
         auto* thread_fields = reinterpret_cast<uint32_t*>(
             reinterpret_cast<uint8_t*>(thread) + sizeof(load_command));
-        thread_fields[0] = ARM_THREAD_STATE64;
-        thread_fields[1] = ARM_THREAD_STATE64_COUNT;
+        thread_fields[0] = 6; // ARM_THREAD_STATE64
+        thread_fields[1] = 68;
         auto* state = reinterpret_cast<uint64_t*>(
             reinterpret_cast<uint8_t*>(thread) + 16);
         state[32] = 0x100000088ULL;
