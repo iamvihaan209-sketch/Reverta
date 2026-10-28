@@ -53,8 +53,7 @@ DyldLinker& DyldLinker::instance() {
 
 bool DyldLinker::is_system_dylib(const std::string& path) {
     static const char* prefixes[] = {
-        "/usr/lib/", "/System/Library/", "/usr/local/lib/",
-        "/usr/lib/swift/", nullptr
+        "/usr/lib/", "/System/Library/", nullptr
     };
     for (int i = 0; prefixes[i]; i++)
         if (path.find(prefixes[i]) == 0) return true;
