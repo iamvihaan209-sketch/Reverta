@@ -186,6 +186,7 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
             }
             const auto* em = reinterpret_cast<const entry_point_command*>(cursor);
             binary.entry_point = em->entryoff;
+            binary.entry_point_is_file_offset = true;
             found_entry = true;
             break;
         }
@@ -198,6 +199,7 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
             }
             const uint64_t* state = reinterpret_cast<const uint64_t*>(cursor + 16);
             binary.entry_point = state[32];
+            binary.entry_point_is_file_offset = false;
             found_entry = true;
             break;
         }
@@ -303,14 +305,6 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
     bool text_found = false;
     for (const auto& seg : binary.segments) {
         if (seg.name == "__TEXT") {
-            if (binary.filetype != MH_DYLIB) {
-                if (seg.vmaddr > std::numeric_limits<uint64_t>::max() - slide ||
-                    binary.entry_point > std::numeric_limits<uint64_t>::max() - (seg.vmaddr + slide)) {
-                    error_msg_ = "Entry-point address overflows";
-                    return false;
-                }
-                binary.entry_point = seg.vmaddr + slide + binary.entry_point;
-            }
             text_found = true;
             break;
         }
@@ -318,6 +312,35 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
     if (!text_found) {
         error_msg_ = "No __TEXT segment found";
         return false;
+    }
+
+    if (binary.filetype != MH_DYLIB) {
+        if (binary.entry_point_is_file_offset) {
+            bool entry_translated = false;
+            for (const auto& seg : binary.segments) {
+                if (binary.entry_point < seg.fileoff ||
+                    binary.entry_point - seg.fileoff >= seg.filesize) continue;
+                const uint64_t delta = binary.entry_point - seg.fileoff;
+                if (seg.vmaddr > UINT64_MAX - delta ||
+                    seg.vmaddr + delta > UINT64_MAX - slide) {
+                    error_msg_ = "Entry-point file offset overflows guest address";
+                    return false;
+                }
+                binary.entry_point = seg.vmaddr + delta + slide;
+                entry_translated = true;
+                break;
+            }
+            if (!entry_translated) {
+                error_msg_ = "LC_MAIN entry offset is not inside a file-backed segment";
+                return false;
+            }
+        } else {
+            if (binary.entry_point > UINT64_MAX - slide) {
+                error_msg_ = "Thread-state entry point overflows guest address";
+                return false;
+            }
+            binary.entry_point += slide;
+        }
     }
 
     if (binary.filetype != MH_DYLIB) {
