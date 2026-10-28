@@ -268,6 +268,28 @@ int main() {
     std::memcpy(&patched, guest_memory + 8, sizeof(patched));
     assert(patched == linker.resolve_symbol("_test_import"));
 
+    // Signed bind addends are applied without unsigned wraparound.
+    const std::vector<uint8_t> negative_addend_bind = {
+        0x40, '_','t','e','s','t','_','i','m','p','o','r','t',0,
+        0x70, 0x08, 0x60, 0x7f, 0x90, 0x00
+    };
+    auto negative_addend_image = make_macho(negative_addend_bind);
+    std::memset(guest_memory, 0, sizeof(guest_memory));
+    assert(linker.apply_fixups(negative_addend_image.data(), negative_addend_image.size(),
+                               0, translate));
+    std::memcpy(&patched, guest_memory + 8, sizeof(patched));
+    assert(patched == linker.resolve_symbol("_test_import") - 1);
+
+    const std::vector<uint8_t> underflow_addend_bind = {
+        0x40, '_','t','e','s','t','_','i','m','p','o','r','t',0,
+        0x70, 0x08, 0x60, 0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x7f,
+        0x90, 0x00
+    };
+    auto underflow_addend_image = make_macho(underflow_addend_bind);
+    std::memset(guest_memory, 0, sizeof(guest_memory));
+    assert(!linker.apply_fixups(underflow_addend_image.data(), underflow_addend_image.size(),
+                                0, translate));
+
     // Export-trie parsing resolves a regular export relative to slid __TEXT.
     auto export_image = make_export_macho();
     assert(linker.link(export_image.data(), export_image.size(), 0x1000, {}));
