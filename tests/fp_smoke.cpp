@@ -43,7 +43,10 @@ int main() {
     put32(code + 40, 0x0B020020); // add w0, w1, w2
     put32(code + 44, 0x1E21400E); // fneg s14, s0
     put32(code + 48, 0x1E60C08F); // fabs d15, d4
-    put32(code + 52, 0x1E212010); // fcmpe s0, s1
+    put32(code + 52, 0x1E223830); // fsub s16, s1, s2
+    put32(code + 56, 0x1E220831); // fmul s17, s1, s2
+    put32(code + 60, 0x1E211852); // fdiv s18, s2, s1
+    put32(code + 64, 0x1E212010); // fcmpe s0, s1
     put32(code + 56, 0x1E62408C); // fcvt s12, d4
     put32(code + 60, 0x1E22C18D); // fcvt d13, s12
 
@@ -92,6 +95,13 @@ int main() {
     assert(as_float(state.q[14][0]) == -3.75f);
     assert(interpreter.step());
     assert(as_double(state.q[15][0]) == 3.75);
+    assert(interpreter.step());
+    assert(as_float(state.q[16][0]) == -0.75f);
+    assert(interpreter.step());
+    assert(as_float(state.q[17][0]) == 3.375f);
+    assert(interpreter.step());
+    assert(as_float(state.q[18][0]) == 1.5f);
+
     state.q[0][0] = 0x7fc00000U; // quiet NaN
     assert(interpreter.step());
     assert(!state.n && !state.z && state.c && state.v);
