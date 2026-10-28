@@ -18,7 +18,7 @@
 
 class SyscallTranslator {
 public:
-    using GuestTranslate = std::function<uint8_t*(uint64_t, size_t)>;
+    using GuestTranslate = std::function<uint8_t*(uint64_t, size_t, GuestAccess)>;
     using GuestMmap = std::function<int64_t(uint64_t, size_t, int, int, int, int64_t)>;
     using GuestMunmap = std::function<int64_t(uint64_t, size_t)>;
     explicit SyscallTranslator(GuestTranslate translate = {}, GuestMmap map = {},
