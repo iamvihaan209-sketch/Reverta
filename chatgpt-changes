@@ -43,7 +43,7 @@ README currently labels phases 1, 2, 4 and 5 as implemented, but these labels sh
 - `DyldLinker::link` only registers empty stubs for system dylibs; non-system/bundled dylibs are TODO.
 - `main.cpp` does not call the linker and has a TODO for patching imports.
 - `MachOLoader` unmaps the original file before returning and does not preserve the raw Mach-O image for the linker. Load-command and segment bounds validation is incomplete; fat-architecture offsets/sizes need validation.
-- Decoder/interpreter/JIT coverage is incomplete. Current tests only cover a small JIT smoke test.
+- Decoder/interpreter/JIT coverage is incomplete, though JIT, loader, classic-linker and scalar-FP smoke tests now exist.
 - Syscall translation is partial and has known ABI/semantic limitations. Do not claim broad app compatibility until these are addressed and tested.
 - No local build was run by ChatGPT. CI is the source of truth for build status.
 
@@ -114,3 +114,11 @@ Changes committed after the initial handoff:
 6. Then proceed with v0.7 FP decode/execute/test coverage and continue the v1.0 integration checklist above.
 
 - Latest linker follow-up: commit `febd96ae` adds bounded chained-fixup parsing for the explicitly supported formats above; its CI build/test run is in progress at the time of this note. Check Actions before relying on it.
+
+### v0.7 progress
+- Added scalar single/double FP decoding for FADD, FSUB, FMUL, FDIV, FCMP and FP-register FMOV.
+- Added interpreter execution for those operations, including NZCV results for ordered comparisons and unordered/NaN compares.
+- Added `tests/fp_smoke.cpp` to check single-precision addition, compare flags and register move.
+- Run #32 at commit `3b53ce43` completed successfully; Configure, Build and Test all passed: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40768025952
+- FP support is a subset only: no FP immediate encodings, general-register FMOV forms, vector SIMD instruction coverage, precise FP exception state, or exhaustive double/NaN edge-case tests yet.
+- Loader failure cleanup was added after that successful run; check the latest run for the newest branch head before claiming all current commits pass.
