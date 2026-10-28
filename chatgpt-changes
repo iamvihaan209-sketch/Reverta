@@ -93,7 +93,7 @@ Changes committed after the initial handoff:
 - Removed `MAP_FIXED` segment mapping. Guest addresses are now translated to separately allocated host mappings; this avoids clobbering the emulator's own host address space.
 - Deferred final segment protections until after relocations and exposed `MachOLoader::finalize_protections`.
 - Added `tests/loader_smoke.cpp` and CTest target `reverta_loader_smoke` for malformed input; added a non-zero-slide regression case to `tests/jit_smoke.cpp`.
-- Bounded classic dyld bind opcode reads with checked ULEB128/SLEB128 decoding, terminated symbol checks, overflow guards, and explicit failure for unsupported bind opcodes.
+- Bounded classic dyld bind/rebase opcode reads with checked ULEB128/SLEB128 decoding, terminated symbol checks, pointer-slide application, overflow guards, and explicit failure for unsupported opcodes.
 - Integrated `DyldLinker::link` and `apply_fixups` into `main.cpp` before final segment protections. Removed the old no-op import TODO.
 - Bundled dylib dependencies now fail clearly instead of being logged as TODO while reporting success.
 - Chained-fixup parsing was upgraded from the unsafe old walker to bounded parsing for uncompressed symbols, import formats 1/2/3, and 64-bit pointer formats 2/6. Unknown formats fail explicitly. This parser still needs fixture-based validation against real Mach-O files.
@@ -122,3 +122,9 @@ Changes committed after the initial handoff:
 - Run #32 at commit `3b53ce43` completed successfully; Configure, Build and Test all passed: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40768025952
 - FP support is a subset only: no FP immediate encodings, general-register FMOV forms, vector SIMD instruction coverage, precise FP exception state, or exhaustive double/NaN edge-case tests yet.
 - Loader failure cleanup was added after that successful run; check the latest run for the newest branch head before claiming all current commits pass.
+
+### Additional Phase 1 and v0.6 progress
+- Corrected W-register result-width behavior for the interpreter's integer data-processing subset: W operations now consume 32-bit operands and zero-extend results; arithmetic flags use 32-bit width. Arithmetic right shift now sign-extends W values correctly.
+- Expanded `tests/fp_smoke.cpp` to exercise both single- and double-precision FADD/FCMP/FMOV, and to catch 32-bit ADD wrap/zero-extension.
+- Expanded `tests/dyld_linker_smoke.cpp` to exercise a classic bind, reject truncated ULEB, accept no-op fixup metadata, and test a classic pointer rebase with a non-zero slide.
+- These tests validate synthetic streams only. They do not prove compatibility with arbitrary Apple-built executables or complete AArch64 instruction semantics.
