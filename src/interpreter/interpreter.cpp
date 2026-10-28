@@ -61,14 +61,15 @@ int64_t Interpreter::mmap_guest(uint64_t requested_address, size_t length, int p
     } else {
         guest_address = (next_guest_mapping_ + page_size - 1) &
                         ~(static_cast<uint64_t>(page_size) - 1);
+        if (map_size > UINT64_MAX - page_size) return -ENOMEM;
+        const uint64_t advance = static_cast<uint64_t>(map_size) + page_size;
+        if (advance > static_cast<uint64_t>(INT64_MAX)) return -ENOMEM;
         while (guest_range_overlaps(guest_address, map_size)) {
-            if (map_size > UINT64_MAX - page_size ||
-                guest_address > UINT64_MAX - (map_size + page_size)) return -ENOMEM;
-            guest_address += map_size + page_size;
+            if (guest_address > static_cast<uint64_t>(INT64_MAX) - advance) return -ENOMEM;
+            guest_address += advance;
         }
-        if (map_size > UINT64_MAX - page_size ||
-            guest_address > static_cast<uint64_t>(INT64_MAX) - (map_size + page_size)) return -ENOMEM;
-        next_guest_mapping_ = guest_address + map_size + page_size;
+        if (guest_address > static_cast<uint64_t>(INT64_MAX) - advance) return -ENOMEM;
+        next_guest_mapping_ = guest_address + advance;
     }
 
     // Guest addresses are virtual IDs; never pass them to host mmap as a fixed
