@@ -3,6 +3,7 @@
 #include <mach-o/loader.h>
 #include <mach/vm_prot.h>
 #include <cassert>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <string>
