@@ -127,6 +127,59 @@ static std::vector<uint8_t> make_bundled_dylib(const std::string& symbol) {
     return image;
 }
 
+static std::vector<uint8_t> make_parent_dylib(
+    const std::string& symbol, const std::string& dependency, const std::string& rpath) {
+    auto align8 = [](size_t n) { return (n + 7) & ~size_t{7}; };
+    std::vector<uint8_t> trie = {0x00, 0x01};
+    for (char ch : symbol) trie.push_back(static_cast<uint8_t>(ch));
+    trie.push_back(0);
+    trie.push_back(static_cast<uint8_t>(trie.size() + 1));
+    trie.insert(trie.end(), {0x02, 0x00, 0x20, 0x00});
+
+    const size_t rpath_size = align8(sizeof(rpath_command) + rpath.size() + 1);
+    const size_t dependency_size = align8(sizeof(dylib_command) + dependency.size() + 1);
+    const size_t commands_size = sizeof(segment_command_64) + rpath_size +
+                                 dependency_size + sizeof(linkedit_data_command);
+    const size_t payload_off = sizeof(mach_header_64) + commands_size;
+    std::vector<uint8_t> image(payload_off + trie.size(), 0);
+    auto* mh = reinterpret_cast<mach_header_64*>(image.data());
+    mh->magic = MH_MAGIC_64;
+    mh->cputype = CPU_TYPE_ARM64;
+    mh->filetype = MH_DYLIB;
+    mh->ncmds = 4;
+    mh->sizeofcmds = static_cast<uint32_t>(commands_size);
+    uint8_t* cursor = image.data() + sizeof(mach_header_64);
+    auto* seg = reinterpret_cast<segment_command_64*>(cursor);
+    seg->cmd = LC_SEGMENT_64;
+    seg->cmdsize = sizeof(segment_command_64);
+    std::memcpy(seg->segname, "__TEXT", 6);
+    seg->vmaddr = 0x100000000ULL;
+    seg->vmsize = 0x1000;
+    cursor += sizeof(segment_command_64);
+
+    auto* rp = reinterpret_cast<rpath_command*>(cursor);
+    rp->cmd = LC_RPATH;
+    rp->cmdsize = static_cast<uint32_t>(rpath_size);
+    rp->path.offset = sizeof(rpath_command);
+    std::memcpy(cursor + rp->path.offset, rpath.c_str(), rpath.size() + 1);
+    cursor += rpath_size;
+
+    auto* dl = reinterpret_cast<dylib_command*>(cursor);
+    dl->cmd = LC_LOAD_DYLIB;
+    dl->cmdsize = static_cast<uint32_t>(dependency_size);
+    dl->dylib.name.offset = sizeof(dylib_command);
+    std::memcpy(cursor + dl->dylib.name.offset, dependency.c_str(), dependency.size() + 1);
+    cursor += dependency_size;
+
+    auto* ex = reinterpret_cast<linkedit_data_command*>(cursor);
+    ex->cmd = LC_DYLD_EXPORTS_TRIE;
+    ex->cmdsize = sizeof(linkedit_data_command);
+    ex->dataoff = static_cast<uint32_t>(payload_off);
+    ex->datasize = static_cast<uint32_t>(trie.size());
+    std::memcpy(image.data() + payload_off, trie.data(), trie.size());
+    return image;
+}
+
 static void write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
     const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
     assert(fd >= 0);
@@ -246,6 +299,32 @@ int main() {
     ::unlink(rpath_path.c_str());
     ::rmdir(frameworks.c_str());
     ::rmdir(directory.c_str());
+
+    // A nested dylib resolves @rpath using its own inherited LC_RPATH entry.
+    char nested_template[] = "/tmp/reverta-nested-test-XXXXXX";
+    char* nested_raw = ::mkdtemp(nested_template);
+    assert(nested_raw != nullptr);
+    const std::string nested_root = nested_raw;
+    const std::string nested_frameworks = nested_root + "/Frameworks";
+    const std::string nested_children = nested_frameworks + "/Children";
+    assert(::mkdir(nested_frameworks.c_str(), 0700) == 0);
+    assert(::mkdir(nested_children.c_str(), 0700) == 0);
+    const std::string parent_path = nested_frameworks + "/libparent.dylib";
+    const std::string child_path = nested_children + "/libchild.dylib";
+    write_bytes(parent_path, make_parent_dylib(
+        "_parent", "@rpath/libchild.dylib", "@loader_path/Children"));
+    write_bytes(child_path, make_bundled_dylib("_child"));
+    const std::string nested_executable = nested_root + "/main";
+    assert(linker.link(export_image.data(), export_image.size(), 0x1000,
+                       {"@rpath/libparent.dylib"}, nested_executable,
+                       {"@executable_path/Frameworks"}));
+    assert(linker.resolve_symbol("_parent") == 0x1300000020ULL);
+    assert(linker.resolve_symbol("_child") == 0x1400000020ULL);
+    ::unlink(parent_path.c_str());
+    ::unlink(child_path.c_str());
+    ::rmdir(nested_children.c_str());
+    ::rmdir(nested_frameworks.c_str());
+    ::rmdir(nested_root.c_str());
 
     // Classic pointer rebase adds the selected image's slide to a pointer slot.
     auto rebase_image = make_macho({}, {0x20, 0x08, 0x51, 0x00});
