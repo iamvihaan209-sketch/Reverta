@@ -47,7 +47,8 @@ int main(int argc, char** argv) {
     // ── Link imports before restoring segment protections ──────────────────────
     DyldLinker& linker = DyldLinker::instance();
     if (!linker.link(binary.image_data.data(), binary.image_data.size(),
-                     binary.base_address, binary.dylibs)) {
+                     binary.base_address, binary.dylibs,
+                     binary.path, binary.rpaths)) {
         std::fprintf(stderr, "[reverta] Dynamic dependency loading failed; see dyld diagnostics above\n");
         return 1;
     }
