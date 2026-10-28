@@ -62,17 +62,19 @@ int64_t Interpreter::mmap_guest(uint64_t requested_address, size_t length, int p
         guest_address = (next_guest_mapping_ + page_size - 1) &
                         ~(static_cast<uint64_t>(page_size) - 1);
         while (guest_range_overlaps(guest_address, map_size)) {
-            if (guest_address > UINT64_MAX - map_size - page_size) return -ENOMEM;
+            if (map_size > UINT64_MAX - page_size ||
+                guest_address > UINT64_MAX - (map_size + page_size)) return -ENOMEM;
             guest_address += map_size + page_size;
         }
-        if (guest_address > static_cast<uint64_t>(INT64_MAX) - map_size) return -ENOMEM;
+        if (map_size > UINT64_MAX - page_size ||
+            guest_address > static_cast<uint64_t>(INT64_MAX) - (map_size + page_size)) return -ENOMEM;
         next_guest_mapping_ = guest_address + map_size + page_size;
     }
 
     // Guest addresses are virtual IDs; never pass them to host mmap as a fixed
     // address. Keep the host mapping readable/writable and track guest prot
     // separately so interpreter accesses cannot crash the host on guest faults.
-    void* host = ::mmap(nullptr, map_size, prot | PROT_READ | PROT_WRITE,
+    void* host = ::mmap(nullptr, map_size, PROT_READ | PROT_WRITE,
                         flags & ~MAP_FIXED, fd, static_cast<off_t>(offset));
     if (host == MAP_FAILED) return -errno;
     dynamic_mappings_.push_back({guest_address, map_size,
