@@ -84,6 +84,7 @@ public:
 private:
     Arm64Insn decode_data_proc_imm(uint32_t insn, uint64_t pc) const;
     Arm64Insn decode_data_proc_reg(uint32_t insn, uint64_t pc) const;
+    Arm64Insn decode_fp(uint32_t insn, uint64_t pc) const;
     Arm64Insn decode_loads_stores(uint32_t insn, uint64_t pc) const;
     Arm64Insn decode_branches(uint32_t insn, uint64_t pc) const;
 };
