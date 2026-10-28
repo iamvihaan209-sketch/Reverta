@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <sys/mman.h>
 
 static void put32(uint8_t* p, uint32_t value) {
     std::memcpy(p, &value, sizeof(value));
@@ -61,6 +62,7 @@ int main() {
     text.vmaddr = 0x1000;
     text.mapped_vmaddr = 0x1000;
     text.vmsize = sizeof(code);
+    text.initprot = PROT_READ | PROT_WRITE | PROT_EXEC;
     text.mapped = code;
     binary.segments.push_back(text);
     binary.entry_point = 0x1000;
@@ -143,6 +145,7 @@ int main() {
     fault_text.vmaddr = 0x3000;
     fault_text.mapped_vmaddr = 0x3000;
     fault_text.vmsize = sizeof(load_code);
+    fault_text.initprot = PROT_READ | PROT_EXEC;
     fault_text.mapped = load_code;
     fault_binary.segments.push_back(fault_text);
     fault_binary.entry_point = 0x3000;
