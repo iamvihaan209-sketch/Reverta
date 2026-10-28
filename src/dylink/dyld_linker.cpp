@@ -841,6 +841,7 @@ bool DyldLinker::load_dependency(
     }
 
     const auto child_dependencies = binary.dylibs;
+    const auto child_weak_dependencies = binary.weak_dylibs;
     const auto child_rpaths = binary.rpaths;
     loaded_binaries_.push_back(std::move(binary));
     std::vector<std::string> inherited_rpaths = child_rpaths;
@@ -856,7 +857,7 @@ bool DyldLinker::load_dependency(
             return false;
         }
     }
-    for (const auto& child : loaded_binaries_.back().weak_dylibs) {
+    for (const auto& child : child_weak_dependencies) {
         if (!load_dependency(child, resolved, executable_path,
                              inherited_rpaths, executable_rpaths, true, depth + 1)) {
             loading_paths_.erase(resolved);
