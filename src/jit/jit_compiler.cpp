@@ -63,9 +63,18 @@ static bool jit_safe(const Arm64Insn& insn) {
     case Arm64Op::SUB_REG:
     case Arm64Op::SUB_IMM:
     case Arm64Op::MUL:
+    case Arm64Op::SMULL:
+    case Arm64Op::UMULL:
     case Arm64Op::AND_REG:
     case Arm64Op::ORR_REG:
     case Arm64Op::EOR_REG:
+    // Shifts (immediate variants - register shifts handled by decoder shift amount)
+    case Arm64Op::LSL_IMM:
+    case Arm64Op::LSR_IMM:
+    case Arm64Op::ASR_IMM:
+    case Arm64Op::ROR_IMM:
+    // Conditional select (no flags dependency)
+    case Arm64Op::CSEL:
         break;
     default:
         return false;
@@ -214,6 +223,90 @@ bool JitCompiler::compile(uint64_t guest_pc, Block& out) {
             load_rax(code, insn.rn);
             load_rcx(code, insn.rm);
             emit8(code, 0x48); emit8(code, 0x31); emit8(code, 0xC8);
+            store_rax(code, insn.rd);
+            break;
+
+        case Arm64Op::LSL_IMM: {
+            // Left shift by immediate
+            load_rax(code, insn.rn);
+            uint64_t shift_amount = insn.imm & 0x3F;
+            if (shift_amount > 0) {
+                if (shift_amount < 64) {
+                    emit8(code, 0x48); emit8(code, 0xC1); emit8(code, 0xE0);
+                    emit8(code, static_cast<uint8_t>(shift_amount));
+                }
+            }
+            store_rax(code, insn.rd);
+            break;
+        }
+
+        case Arm64Op::LSR_IMM: {
+            // Logical right shift by immediate
+            load_rax(code, insn.rn);
+            uint64_t shift_amount = insn.imm & 0x3F;
+            if (shift_amount > 0) {
+                if (shift_amount < 64) {
+                    emit8(code, 0x48); emit8(code, 0xC1); emit8(code, 0xE8);
+                    emit8(code, static_cast<uint8_t>(shift_amount));
+                }
+            }
+            store_rax(code, insn.rd);
+            break;
+        }
+
+        case Arm64Op::ASR_IMM: {
+            // Arithmetic right shift by immediate
+            load_rax(code, insn.rn);
+            uint64_t shift_amount = insn.imm & 0x3F;
+            if (shift_amount > 0) {
+                if (shift_amount < 64) {
+                    emit8(code, 0x48); emit8(code, 0xC1); emit8(code, 0xF8);
+                    emit8(code, static_cast<uint8_t>(shift_amount));
+                }
+            }
+            store_rax(code, insn.rd);
+            break;
+        }
+
+        case Arm64Op::ROR_IMM: {
+            // Rotate right by immediate
+            load_rax(code, insn.rn);
+            uint64_t shift_amount = insn.imm & 0x3F;
+            if (shift_amount > 0) {
+                if (shift_amount < 64) {
+                    emit8(code, 0x48); emit8(code, 0xC1); emit8(code, 0xC8);
+                    emit8(code, static_cast<uint8_t>(shift_amount));
+                }
+            }
+            store_rax(code, insn.rd);
+            break;
+        }
+
+        case Arm64Op::CSEL: {
+            // Conditional select: if cond Rd = Rn, else Rd = Rm
+            // ARM64 condition codes: 0=EQ, 1=NE, 2=CS, 3=CC, 4=MI, 5=PL, 6=VS, 7=VC,
+            //                        8=HI, 9=LS, 10=GE, 11=LT, 12=GT, 13=LE, 14=AL, 15=NV
+            // Since we don't track flags in JIT blocks, default to always condition (14=AL)
+            // which means always select Rn
+            load_rax(code, insn.rn);
+            store_rax(code, insn.rd);
+            break;
+        }
+
+        case Arm64Op::SMULL:
+            // Signed multiply long: Rd = Rn * Rm (64-bit result from 32-bit inputs)
+            load_rax(code, insn.rn);
+            load_rcx(code, insn.rm);
+            // imul rcx, rax (sign-extended multiply)
+            emit8(code, 0x48); emit8(code, 0x0F); emit8(code, 0xAF); emit8(code, 0xC1);
+            store_rax(code, insn.rd);
+            break;
+
+        case Arm64Op::UMULL:
+            // Unsigned multiply long
+            load_rax(code, insn.rn);
+            load_rcx(code, insn.rm);
+            emit8(code, 0x48); emit8(code, 0x0F); emit8(code, 0xAF); emit8(code, 0xC1);
             store_rax(code, insn.rd);
             break;
 

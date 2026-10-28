@@ -335,5 +335,90 @@ void vfmax_f32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
     for(int i=0;i<4;i++) d[i]=std::max(x[i],y[i]);
 #endif
 }
+void vmin_s32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#if defined(USE_SSE2) && defined(__SSE4_1__)
+    store128(dst, _mm_min_epi32(load128(a), load128(b)));
+#else
+    int32_t *d=(int32_t*)dst,*x=(int32_t*)a,*y=(int32_t*)b;
+    for(int i=0;i<4;i++) d[i]=std::min(x[i],y[i]);
+#endif
+}
+void vmax_s32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#if defined(USE_SSE2) && defined(__SSE4_1__)
+    store128(dst, _mm_max_epi32(load128(a), load128(b)));
+#else
+    int32_t *d=(int32_t*)dst,*x=(int32_t*)a,*y=(int32_t*)b;
+    for(int i=0;i<4;i++) d[i]=std::max(x[i],y[i]);
+#endif
+}
+
+// ── compare ────────────────────────────────────────────────────────────────────
+
+void vcmp_eq_u32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#ifdef USE_SSE2
+    store128(dst, _mm_cmpeq_epi32(load128(a), load128(b)));
+#else
+    uint32_t *d=(uint32_t*)dst,*x=(uint32_t*)a,*y=(uint32_t*)b;
+    for(int i=0;i<4;i++) d[i]=(x[i]==y[i])?0xFFFFFFFF:0;
+#endif
+}
+void vcmp_gt_s32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#ifdef USE_SSE2
+    store128(dst, _mm_cmpgt_epi32(load128(a), load128(b)));
+#else
+    int32_t *d=(int32_t*)dst,*x=(int32_t*)a,*y=(int32_t*)b;
+    for(int i=0;i<4;i++) d[i]=(x[i]>y[i])?-1:0;
+#endif
+}
+void vcmp_lt_s32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#ifdef USE_SSE2
+    store128(dst, _mm_cmplt_epi32(load128(a), load128(b)));
+#else
+    int32_t *d=(int32_t*)dst,*x=(int32_t*)a,*y=(int32_t*)b;
+    for(int i=0;i<4;i++) d[i]=(x[i]<y[i])?-1:0;
+#endif
+}
+void vcmp_eq_f32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#ifdef USE_SSE2
+    storef(dst, _mm_cmpeq_ps(loadf(a), loadf(b)));
+#else
+    float *d=(float*)dst,*x=(float*)a,*y=(float*)b;
+    uint32_t *di=(uint32_t*)d;
+    for(int i=0;i<4;i++) di[i]=(x[i]==y[i])?0xFFFFFFFFU:0;
+#endif
+}
+void vcmp_gt_f32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#ifdef USE_SSE2
+    storef(dst, _mm_cmpgt_ps(loadf(a), loadf(b)));
+#else
+    float *d=(float*)dst,*x=(float*)a,*y=(float*)b;
+    uint32_t *di=(uint32_t*)d;
+    for(int i=0;i<4;i++) di[i]=(x[i]>y[i])?0xFFFFFFFFU:0;
+#endif
+}
+
+// ── arithmetic saturation (addition/subtraction clamping) ─────────────────────
+
+void vqadd_u32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#ifdef USE_SSE2
+    store128(dst, _mm_adds_epi32(load128(a), load128(b)));
+#else
+    uint32_t *d=(uint32_t*)dst,*x=(uint32_t*)a,*y=(uint32_t*)b;
+    for(int i=0;i<4;i++) {
+        uint64_t sum = (uint64_t)x[i] + y[i];
+        d[i] = (sum > 0xFFFFFFFFU) ? 0xFFFFFFFFU : (uint32_t)sum;
+    }
+#endif
+}
+void vqsub_u32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
+#ifdef USE_SSE2
+    store128(dst, _mm_subs_epi32(load128(a), load128(b)));
+#else
+    uint32_t *d=(uint32_t*)dst,*x=(uint32_t*)a,*y=(uint32_t*)b;
+    for(int i=0;i<4;i++) {
+        d[i] = (x[i] < y[i]) ? 0 : (x[i] - y[i]);
+    }
+#endif
+}
 
 } // namespace NeonSimd

@@ -4,16 +4,33 @@
 
 // AArch64 instruction types we handle
 enum class Arm64Op {
-    // Data processing
+    // Data processing - MOV/immediate
     MOV_REG, MOV_IMM,
+    // Data processing - arithmetic
     ADD_REG, ADD_IMM,
     SUB_REG, SUB_IMM,
-    MUL,
+    MUL, SMULL, UMULL,
+    // Data processing - logical
     AND_REG, AND_IMM,
     ORR_REG, ORR_IMM,
     EOR_REG, EOR_IMM,
-    LSL_IMM, LSR_IMM, ASR_IMM,
+    // Data processing - shifts
+    LSL_IMM, LSL_REG,
+    LSR_IMM, LSR_REG,
+    ASR_IMM, ASR_REG,
+    ROR_IMM, ROR_REG,
+    // Data processing - compare & test
     CMP_REG, CMP_IMM,
+    CMN_REG, CMN_IMM,
+    TST_REG, TST_IMM,
+    // Data processing - bitfield
+    UBFX, SBFX, BFI,
+    // Data processing - conditional
+    CSEL, CSNEG, CSINC,
+    // Floating point
+    FADD, FSUB, FMUL, FDIV,
+    FCMP, FCMPE,
+    FMOV, FMOV_IMM,
     // Load/Store
     LDR_REG, LDR_IMM,
     STR_REG, STR_IMM,

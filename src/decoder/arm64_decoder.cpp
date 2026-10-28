@@ -95,6 +95,18 @@ Arm64Insn Arm64Decoder::decode_data_proc_reg(uint32_t insn, uint64_t pc) const {
 
     uint32_t op24 = bits(insn, 28, 24);
 
+    // Conditional select [28:21] = 1101010
+    if ((insn >> 21) == 0b1101010) {
+        uint32_t opc = bits(insn, 30, 30);
+        out.cond = static_cast<Arm64Cond>(bits(insn, 15, 12));
+        switch (opc) {
+        case 0: out.op = Arm64Op::CSEL; break;
+        case 1: out.op = Arm64Op::CSINC; break;
+        default: out.op = Arm64Op::UNKNOWN;
+        }
+        return out;
+    }
+
     // Logical shifted register / Add-sub shifted / etc.
     if (op24 == 0b01011) {
         // Add/sub shifted register [28:24] = 01011.
@@ -111,7 +123,13 @@ Arm64Insn Arm64Decoder::decode_data_proc_reg(uint32_t insn, uint64_t pc) const {
         }
     } else if ((op24 & 0b11111) == 0b11011) {
         // Data-processing 3-source (MUL etc.)
-        out.op = Arm64Op::MUL;
+        uint32_t opc = bits(insn, 22, 21);
+        switch (opc) {
+        case 0b00: out.op = Arm64Op::MUL; break;
+        case 0b01: out.op = Arm64Op::SMULL; break;
+        case 0b10: out.op = Arm64Op::UMULL; break;
+        default: out.op = Arm64Op::UNKNOWN;
+        }
     } else {
         // Logical shifted register
         uint32_t opc = bits(insn, 30, 29);

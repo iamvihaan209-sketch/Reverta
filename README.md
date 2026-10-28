@@ -8,17 +8,17 @@ The opposite of Apple's Rosetta 2.
 | Phase | Feature | Status |
 |-------|---------|--------|
 | 1 | ARM64 Mach-O loader (static + fat binaries) | ✅ |
-| 1 | AArch64 instruction decoder (core integer subset) | ✅ |
+| 1 | AArch64 instruction decoder (expanded: shifts, conditional select, multiply) | ✅ |
 | 1 | Interpreter (branches, load/store, data processing, flags) | ✅ |
 | 1 | Syscall translation (exit, read, write, open, mmap, ...) | ✅ |
+| 2 | JIT compiler (basic blocks: MOV, ADD/SUB, logic, shifts, CSEL, MUL) | ✅ |
+| 4 | NEON/SIMD (extended: compare, min/max, saturating arith) | ✅ |
 | 5 | ObjC runtime bridge (objc_msgSend, alloc/init, retain/release) | ✅ |
 | 5 | Swift runtime bridge (alloc, retain/release, stdlib stubs) | ✅ |
 | 5 | Foundation / CoreFoundation stubs (CFString, CFData, CFArray, ...) | ✅ |
 | 5 | AppKit stubs (NSApplication, NSWindow, NSView, NSAlert) | ✅ |
 | 5 | Dylib interceptor (routes ARM64 dylib calls to host stubs) | ✅ |
-| 2 | JIT compiler | - |
 | 3 | Dynamic linker (full ARM64 dylib loading) | 🔲 |
-| 4 | Full NEON / SIMD | 🔲 |
 
 ## Build
 
@@ -72,8 +72,9 @@ ARM64 Mach-O binary
 ## Roadmap
 
 - **v0.3** — JIT: translate ARM64 basic blocks → native x86-64, block cache
-- **v0.4** — Full dynamic linker: load + translate ARM64 dylibs on demand  
-- **v0.5** — Full NEON → SSE/AVX mapping
+- **v0.5.0-beta** — Stabilized JIT (shifts, CSEL, multiply variants), extended NEON (compare, saturating ops)
+- **v0.6** — Full dynamic linker: load + translate ARM64 dylibs on demand  
+- **v0.7** — Floating-point ops (FADD, FCMP, FMOV)
 - **v1.0** — Real apps running end-to-end
 
 ## Contributors
