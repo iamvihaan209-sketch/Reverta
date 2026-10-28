@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <cstddef>
+#include <vector>
 #include "loader/macho_loader.h"
 #include "decoder/arm64_decoder.h"
 
@@ -40,6 +42,7 @@ using SyscallHandler = std::function<bool(CpuState&)>;
 class Interpreter {
 public:
     explicit Interpreter(const LoadedBinary& binary);
+    ~Interpreter();
 
     void set_syscall_handler(SyscallHandler h) { syscall_handler_ = std::move(h); }
 
@@ -54,8 +57,19 @@ public:
 
     // Translate guest virtual address to host pointer (nullptr if unmapped)
     uint8_t* guest_to_host(uint64_t vaddr, size_t access_size = 1) const;
+    int64_t mmap_guest(uint64_t requested_address, size_t length, int prot,
+                       int flags, int fd, int64_t offset);
+    int64_t munmap_guest(uint64_t address, size_t length);
 
 private:
+    struct DynamicMapping {
+        uint64_t guest_base;
+        size_t size;
+        uint8_t* host;
+        int prot;
+    };
+    bool guest_range_overlaps(uint64_t address, size_t size) const;
+
     void execute(const Arm64Insn& insn);
     void execute_branch(const Arm64Insn& insn);
     void execute_load_store(const Arm64Insn& insn);
@@ -72,4 +86,6 @@ private:
     SyscallHandler syscall_handler_;
     bool running_ = false;
     bool faulted_ = false;
+    std::vector<DynamicMapping> dynamic_mappings_;
+    uint64_t next_guest_mapping_ = 0x4000000000ULL;
 };
