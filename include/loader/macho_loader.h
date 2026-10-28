@@ -9,6 +9,7 @@
 struct Segment {
     std::string name;
     uint64_t vmaddr;   // Mach-O preferred virtual address, before slide
+    uint64_t mapped_vmaddr = 0; // guest address after slide; zero means vmaddr for tests
     uint64_t vmsize;
     uint64_t fileoff;
     uint64_t filesize;
