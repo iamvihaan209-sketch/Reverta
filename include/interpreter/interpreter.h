@@ -60,6 +60,7 @@ private:
     void execute_branch(const Arm64Insn& insn);
     void execute_load_store(const Arm64Insn& insn);
     void execute_data_proc(const Arm64Insn& insn);
+    void execute_fp(const Arm64Insn& insn);
 
     bool eval_cond(Arm64Cond cond) const;
     void update_flags_add(uint64_t a, uint64_t b, uint64_t result);
