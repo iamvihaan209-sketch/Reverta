@@ -7,6 +7,8 @@
 #include <cstring>
 #include <functional>
 #include <unordered_set>
+#include <filesystem>
+#include <sys/mman.h>
 
 namespace {
 bool read_uleb128(const uint8_t*& p, const uint8_t* end, uint64_t& value) {
@@ -695,19 +697,170 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
     return true;
 }
 
+bool DyldLinker::load_dependency(
+    const std::string& install_name,
+    const std::string& loader_path,
+    const std::string& executable_path,
+    const std::vector<std::string>& loader_rpaths,
+    const std::vector<std::string>& executable_rpaths,
+    size_t depth) {
+    if (depth > 64) {
+        std::fprintf(stderr, "[dyld] dependency nesting limit exceeded at %s\n",
+                     install_name.c_str());
+        return false;
+    }
+    if (loaded_paths_.count(install_name) || loading_paths_.count(install_name))
+        return true;
+    if (is_system_dylib(install_name)) {
+        LoadedDylib stub{};
+        stub.path = stub.install_name = install_name;
+        stub.base = 0;
+        stub.is_stub_dylib = true;
+        register_dylib(std::move(stub));
+        loaded_paths_.insert(install_name);
+        std::fprintf(stderr, "[dyld] using host interceptor stubs for %s\n",
+                     install_name.c_str());
+        return true;
+    }
+
+    namespace fs = std::filesystem;
+    const fs::path loader_dir = fs::path(loader_path).parent_path();
+    const fs::path executable_dir = fs::path(executable_path).parent_path();
+    auto expand_rpath = [&](const std::string& value, const fs::path& relative_dir) -> fs::path {
+        if (value == "@loader_path") return relative_dir;
+        if (value.rfind("@loader_path/", 0) == 0)
+            return relative_dir / value.substr(std::string("@loader_path/").size());
+        if (value == "@executable_path") return executable_dir;
+        if (value.rfind("@executable_path/", 0) == 0)
+            return executable_dir / value.substr(std::string("@executable_path/").size());
+        fs::path p(value);
+        return p.is_absolute() ? p : (relative_dir / p);
+    };
+
+    std::vector<fs::path> candidates;
+    if (install_name.rfind("@loader_path/", 0) == 0) {
+        candidates.push_back(loader_dir / install_name.substr(std::string("@loader_path/").size()));
+    } else if (install_name.rfind("@executable_path/", 0) == 0) {
+        candidates.push_back(executable_dir / install_name.substr(std::string("@executable_path/").size()));
+    } else if (install_name.rfind("@rpath/", 0) == 0) {
+        const std::string suffix = install_name.substr(std::string("@rpath/").size());
+        for (const auto& rp : loader_rpaths)
+            candidates.push_back(expand_rpath(rp, loader_dir) / suffix);
+        for (const auto& rp : executable_rpaths)
+            candidates.push_back(expand_rpath(rp, executable_dir) / suffix);
+    } else {
+        fs::path p(install_name);
+        candidates.push_back(p.is_absolute() ? p : loader_dir / p);
+    }
+
+    std::string resolved;
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        const fs::path canonical = fs::canonical(candidate, ec);
+        if (!ec) {
+            resolved = canonical.string();
+            break;
+        }
+    }
+    if (resolved.empty()) {
+        std::fprintf(stderr, "[dyld] cannot resolve bundled dependency path: %s\n",
+                     install_name.c_str());
+        return false;
+    }
+    if (is_system_dylib(resolved)) {
+        LoadedDylib stub{};
+        stub.path = stub.install_name = resolved;
+        stub.base = 0;
+        stub.is_stub_dylib = true;
+        register_dylib(std::move(stub));
+        loaded_paths_.insert(install_name);
+        loaded_paths_.insert(resolved);
+        return true;
+    }
+    if (loaded_paths_.count(resolved) || loading_paths_.count(resolved)) return true;
+
+    loading_paths_.insert(resolved);
+    if (next_dylib_slide_ > UINT64_MAX - 0x100000000ULL) {
+        loading_paths_.erase(resolved);
+        return false;
+    }
+    const uint64_t dylib_slide = next_dylib_slide_;
+    next_dylib_slide_ += 0x100000000ULL;
+
+    MachOLoader loader;
+    auto maybe_binary = loader.load(resolved, dylib_slide);
+    if (!maybe_binary) {
+        std::fprintf(stderr, "[dyld] failed to load %s: %s\n",
+                     resolved.c_str(), loader.error().c_str());
+        loading_paths_.erase(resolved);
+        return false;
+    }
+    LoadedBinary binary = std::move(*maybe_binary);
+    if (binary.filetype != MH_DYLIB) {
+        std::fprintf(stderr, "[dyld] dependency is not MH_DYLIB: %s\n",
+                     resolved.c_str());
+        for (const auto& seg : binary.segments)
+            if (seg.mapped && seg.vmsize) ::munmap(seg.mapped, static_cast<size_t>(seg.vmsize));
+        loading_paths_.erase(resolved);
+        return false;
+    }
+    if (!parse_exports(binary.image_data.data(), binary.image_data.size(),
+                       binary.base_address)) {
+        for (const auto& seg : binary.segments)
+            if (seg.mapped && seg.vmsize) ::munmap(seg.mapped, static_cast<size_t>(seg.vmsize));
+        loading_paths_.erase(resolved);
+        return false;
+    }
+
+    const auto child_dependencies = binary.dylibs;
+    const auto child_rpaths = binary.rpaths;
+    loaded_binaries_.push_back(std::move(binary));
+    for (const auto& child : child_dependencies) {
+        if (!load_dependency(child, resolved, executable_path,
+                             child_rpaths, executable_rpaths, depth + 1)) {
+            loading_paths_.erase(resolved);
+            return false;
+        }
+    }
+    loading_paths_.erase(resolved);
+    loaded_paths_.insert(resolved);
+    loaded_paths_.insert(install_name);
+    return true;
+}
+
 bool DyldLinker::link(const uint8_t* data, size_t size,
-                       uint64_t slide,
-                       const std::vector<std::string>& required_dylibs) {
+                      uint64_t slide,
+                      const std::vector<std::string>& required_dylibs,
+                      const std::string& executable_path,
+                      const std::vector<std::string>& executable_rpaths) {
     if (!parse_exports(data, size, slide)) return false;
-    for (auto& path : required_dylibs) {
-        if (is_system_dylib(path)) {
-            LoadedDylib dl{};
-            dl.path = dl.install_name = path;
-            dl.base = 0; dl.is_stub_dylib = true;
-            register_dylib(std::move(dl));
-            std::fprintf(stderr, "[dyld] stub: %s\n", path.c_str());
-        } else {
-            std::fprintf(stderr, "[dyld] bundled dylib loading is not implemented: %s\n", path.c_str());
+    for (const auto& path : required_dylibs) {
+        if (!load_dependency(path, executable_path, executable_path,
+                             executable_rpaths, executable_rpaths, 0))
+            return false;
+    }
+
+    for (auto& binary : loaded_binaries_) {
+        const auto guest_to_host = [&](uint64_t address) -> uint8_t* {
+            for (const auto& seg : binary.segments) {
+                const uint64_t base = seg.mapped_vmaddr ? seg.mapped_vmaddr : seg.vmaddr;
+                if (!seg.mapped || address < base) continue;
+                const uint64_t offset = address - base;
+                if (offset <= seg.vmsize && seg.vmsize - offset >= sizeof(uint64_t))
+                    return seg.mapped + offset;
+            }
+            return nullptr;
+        };
+        if (!apply_fixups(binary.image_data.data(), binary.image_data.size(),
+                          binary.base_address, guest_to_host)) {
+            std::fprintf(stderr, "[dyld] fixups failed for dependency %s\n",
+                         binary.path.c_str());
+            return false;
+        }
+        MachOLoader protector;
+        if (!protector.finalize_protections(binary)) {
+            std::fprintf(stderr, "[dyld] protection setup failed for %s: %s\n",
+                         binary.path.c_str(), protector.error().c_str());
             return false;
         }
     }
