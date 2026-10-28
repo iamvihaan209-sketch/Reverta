@@ -209,7 +209,7 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
                 break;
             case 0xa0: // DO_BIND_ADD_ADDR_ULEB
                 if (!read_uleb128(p, end, u) || !bind_once() ||
-                    u > UINT64_MAX - seg_offset - 8) return false;
+                    seg_offset > UINT64_MAX - 8 || u > UINT64_MAX - seg_offset - 8) return false;
                 seg_offset += u + 8;
                 break;
             case 0xb0: // DO_BIND_ADD_ADDR_IMM_SCALED
@@ -222,7 +222,7 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
                 if (!read_uleb128(p, end, count) || !read_uleb128(p, end, skip) ||
                     count > bs) return false;
                 for (uint64_t n = 0; n < count; ++n) {
-                    if (!bind_once() || skip > UINT64_MAX - seg_offset - 8) return false;
+                    if (!bind_once() || seg_offset > UINT64_MAX - 8 || skip > UINT64_MAX - seg_offset - 8) return false;
                     seg_offset += skip + 8;
                 }
                 break;
