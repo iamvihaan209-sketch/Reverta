@@ -81,7 +81,7 @@ void DyldLinker::register_dylib(LoadedDylib lib) {
 
 GuestPtr DyldLinker::resolve_symbol(const std::string& name) {
     if (name.empty()) {
-        std::fprintf(stderr, "[dyld] refusing to resolve an empty symbol name\\n");
+        std::fprintf(stderr, "[dyld] refusing to resolve an empty symbol name\n");
         return 0;
     }
 
@@ -288,7 +288,7 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
             if (!resolved) return false;
             GuestPtr value = 0;
             if (!add_signed_checked(resolved, addend, value)) {
-                std::fprintf(stderr, "[dyld] bind addend overflows symbol address: %s\\n", sym_name.c_str());
+                std::fprintf(stderr, "[dyld] bind addend overflows symbol address: %s\n", sym_name.c_str());
                 return false;
             }
             std::memcpy(host, &value, sizeof(value));
