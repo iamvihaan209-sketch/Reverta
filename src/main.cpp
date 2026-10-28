@@ -93,13 +93,6 @@ int main(int argc, char** argv) {
         return syscalls.handle(state);
     });
 
-    // ── Patch dylib stubs into the binary's __got / __stubs ──────────────────
-    // For every imported symbol the loader found, replace its stub with
-    // a trampoline address so the interpreter routes to our HostFn
-    for (auto& d : binary.dylibs) {
-        (void)d; // TODO: walk LC_DYLD_INFO to patch individual symbols
-    }
-
     // ── Run ───────────────────────────────────────────────────────────────────
     std::fprintf(stderr, "[reverta] Starting at 0x%llx\n",
                  (unsigned long long)binary.entry_point);
