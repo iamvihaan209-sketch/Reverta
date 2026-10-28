@@ -178,7 +178,7 @@ Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
         return out;
     }
     // FMOV register: Rm and opcode fields are fixed; Rn/Rd select FP registers.
-    if ((insn & 0xFFBFFC00) == 0x1E204000) {
+    if ((insn & 0xFF201FE0) == 0x1E201000) {\n        out.op = Arm64Op::FMOV_IMM;\n        out.imm = bits(insn, 20, 13);\n        return out;\n    }\n    if ((insn & 0xFFBFFC00) == 0x1E204000) {
         out.op = Arm64Op::FMOV;
         return out;
     }
