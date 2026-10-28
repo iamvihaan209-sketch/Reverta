@@ -11,7 +11,7 @@
 
 int main() {
     uint8_t memory[256]{};
-    auto translate = [&](uint64_t address, size_t size) -> uint8_t* {
+    auto translate = [&](uint64_t address, size_t size, GuestAccess) -> uint8_t* {
         if (address < 0x1000) return nullptr;
         const uint64_t offset = address - 0x1000;
         if (offset >= sizeof(memory) || size > sizeof(memory) - offset) return nullptr;
