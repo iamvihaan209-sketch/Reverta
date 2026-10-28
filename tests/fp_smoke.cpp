@@ -116,5 +116,21 @@ int main() {
     Arm64Decoder decoder;
     const Arm64Insn unknown = decoder.decode(unsupported, 0x2000);
     assert(unknown.op == Arm64Op::UNKNOWN);
+
+    // An unmapped/out-of-range guest load must fault, never dereference a host pointer.
+    alignas(4) uint8_t load_code[4]{};
+    put32(load_code, 0xF9400020); // ldr x0, [x1]
+    LoadedBinary fault_binary{};
+    Segment fault_text{};
+    fault_text.name = "__TEXT";
+    fault_text.vmaddr = 0x3000;
+    fault_text.mapped_vmaddr = 0x3000;
+    fault_text.vmsize = sizeof(load_code);
+    fault_text.mapped = load_code;
+    fault_binary.segments.push_back(fault_text);
+    fault_binary.entry_point = 0x3000;
+    Interpreter fault_interpreter(fault_binary);
+    fault_interpreter.state().x[1] = 0xDEADBEEF;
+    assert(!fault_interpreter.step());
     return 0;
 }
