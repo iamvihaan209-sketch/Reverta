@@ -29,7 +29,7 @@ static float as_float(uint64_t bits) {
 }
 
 int main() {
-    alignas(4) uint8_t code[56]{};
+    alignas(4) uint8_t code[64]{};
     put32(code + 0, 0x1E222820); // fadd s0, s1, s2
     put32(code + 4, 0x1E212000); // fcmp s0, s1
     put32(code + 8, 0x1E204003); // fmov s3, s0
@@ -44,6 +44,8 @@ int main() {
     put32(code + 44, 0x1E21400E); // fneg s14, s0
     put32(code + 48, 0x1E60C08F); // fabs d15, d4
     put32(code + 52, 0x1E212010); // fcmpe s0, s1
+    put32(code + 56, 0x1E62408C); // fcvt s12, d4
+    put32(code + 60, 0x1E22C18D); // fcvt d13, s12
 
     LoadedBinary binary{};
     Segment text{};
@@ -93,7 +95,11 @@ int main() {
     state.q[0][0] = 0x7fc00000U; // quiet NaN
     assert(interpreter.step());
     assert(!state.n && !state.z && state.c && state.v);
-    assert(state.pc == 0x1038);
+    assert(interpreter.step());
+    assert(as_float(state.q[12][0]) == 3.75f);
+    assert(interpreter.step());
+    assert(as_double(state.q[13][0]) == 3.75);
+    assert(state.pc == 0x1040);
 
     // An unsupported scalar FP encoding must not be misidentified as an implemented op.
     alignas(4) uint8_t unsupported[4]{};
