@@ -148,16 +148,6 @@ int main() {
     auto& interceptor = DylibInterceptor::instance();
     interceptor.register_symbol("_test_import", [](uint64_t*, int) -> uint64_t { return 0; });
 
-    // Export-trie parsing resolves a regular export relative to slid __TEXT.
-    auto export_image = make_export_macho();
-    assert(linker.link(export_image.data(), export_image.size(), 0x1000, {}));
-    assert(linker.resolve_symbol("_foo") == 0x100001020ULL);
-    auto malformed_export = export_image;
-    auto* bad_export = reinterpret_cast<linkedit_data_command*>(
-        malformed_export.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
-    bad_export->dataoff = UINT32_MAX;
-    assert(!linker.link(malformed_export.data(), malformed_export.size(), 0x1000, {}));
-
     // SET_SYMBOL("_test_import"), SET_SEGMENT_AND_OFFSET(0, 8), DO_BIND, DONE.
     const std::vector<uint8_t> binds = {
         0x40, '_','t','e','s','t','_','i','m','p','o','r','t',0,
@@ -176,6 +166,17 @@ int main() {
     uint64_t patched = 0;
     std::memcpy(&patched, guest_memory + 8, sizeof(patched));
     assert(patched == linker.resolve_symbol("_test_import"));
+
+    // Export-trie parsing resolves a regular export relative to slid __TEXT.
+    auto export_image = make_export_macho();
+    assert(linker.link(export_image.data(), export_image.size(), 0x1000, {}));
+    assert(linker.resolve_symbol("_foo") == 0x100001020ULL);
+    auto malformed_export = export_image;
+    auto* bad_export = reinterpret_cast<linkedit_data_command*>(
+        malformed_export.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
+    bad_export->dataoff = UINT32_MAX;
+    assert(!linker.link(malformed_export.data(), malformed_export.size(), 0x1000, {}));
+
 
     // Classic pointer rebase adds the selected image's slide to a pointer slot.
     auto rebase_image = make_macho({}, {0x20, 0x08, 0x51, 0x00});
