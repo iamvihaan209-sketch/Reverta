@@ -38,7 +38,8 @@ public:
               uint64_t slide,
               const std::vector<std::string>& required_dylibs,
               const std::string& executable_path = {},
-              const std::vector<std::string>& executable_rpaths = {});
+              const std::vector<std::string>& executable_rpaths = {},
+              const std::vector<std::string>& weak_dylibs = {});
 
     GuestPtr resolve_symbol(const std::string& name);
     void     patch_got_slot(uint8_t* host_addr, const std::string& symbol);
@@ -65,7 +66,7 @@ private:
                          const std::string& executable_path,
                          const std::vector<std::string>& loader_rpaths,
                          const std::vector<std::string>& executable_rpaths,
-                         size_t depth);
+                         bool weak, size_t depth);
 
     std::vector<LoadedDylib> dylibs_;
     std::unordered_map<std::string, GuestPtr> symbol_map_;
