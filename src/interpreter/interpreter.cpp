@@ -14,19 +14,27 @@ Interpreter::Interpreter(const LoadedBinary& binary)
     state_.sp &= ~0xFULL;
 }
 
-uint8_t* Interpreter::guest_to_host(uint64_t vaddr) const {
+uint8_t* Interpreter::guest_to_host(uint64_t vaddr, size_t access_size) const {
+    if (access_size == 0) return nullptr;
     for (const auto& seg : binary_.segments) {
         if (!seg.mapped) continue;
         const uint64_t guest_base = seg.mapped_vmaddr ? seg.mapped_vmaddr : seg.vmaddr;
-        if (vaddr >= guest_base && vaddr - guest_base < seg.vmsize) {
-            return seg.mapped + (vaddr - guest_base);
-        }
+        if (vaddr < guest_base) continue;
+        const uint64_t offset = vaddr - guest_base;
+        if (offset < seg.vmsize && access_size <= seg.vmsize - offset)
+            return seg.mapped + offset;
+    }
+    if (binary_.stack_size && vaddr >= binary_.stack_base) {
+        const uint64_t offset = vaddr - binary_.stack_base;
+        if (offset < binary_.stack_size && access_size <= binary_.stack_size - offset)
+            return reinterpret_cast<uint8_t*>(vaddr);
     }
     return nullptr;
 }
 
 RunResult Interpreter::run() {
     running_ = true;
+    faulted_ = false;
     JitCompiler jit(binary_);
 
     while (running_) {
@@ -35,7 +43,7 @@ RunResult Interpreter::run() {
         if (jit.run(state_))
             continue;
 
-        uint8_t* host_pc = guest_to_host(state_.pc);
+        uint8_t* host_pc = guest_to_host(state_.pc, sizeof(uint32_t));
         if (!host_pc) {
             std::fprintf(stderr, "[reverta] FAULT: PC 0x%llx unmapped\n",
                          (unsigned long long)state_.pc);
@@ -64,6 +72,7 @@ RunResult Interpreter::run() {
 
         uint64_t old_pc = state_.pc;
         execute(insn);
+        if (faulted_) return RunResult::FAULT;
 
         // If execute didn't change PC (non-branch), advance it
         if (state_.pc == old_pc) {
@@ -74,11 +83,13 @@ RunResult Interpreter::run() {
 }
 
 bool Interpreter::step() {
-    uint8_t* host_pc = guest_to_host(state_.pc);
+    if (faulted_) return false;
+    uint8_t* host_pc = guest_to_host(state_.pc, sizeof(uint32_t));
     if (!host_pc) return false;
     Arm64Insn insn = decoder_.decode(host_pc, state_.pc);
     uint64_t old_pc = state_.pc;
     execute(insn);
+    if (faulted_) return false;
     if (state_.pc == old_pc) state_.pc += 4;
     return true;
 }
@@ -216,11 +227,16 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
     else
         addr = state_.reg(insn.rn) + insn.imm;
 
-    uint8_t* host = guest_to_host(addr);
-    // Fall back to stack
+    size_t access_size = insn.is64 ? sizeof(uint64_t) : sizeof(uint32_t);
+    if (insn.op == Arm64Op::LDRB || insn.op == Arm64Op::STRB) access_size = 1;
+    else if (insn.op == Arm64Op::LDRH || insn.op == Arm64Op::STRH) access_size = 2;
+    else if (insn.op == Arm64Op::LDP || insn.op == Arm64Op::STP) access_size *= 2;
+    uint8_t* host = guest_to_host(addr, access_size);
     if (!host) {
-        // Try treating addr as a host pointer (for our mmap'd stack)
-        host = reinterpret_cast<uint8_t*>(addr);
+        std::fprintf(stderr, "[reverta] FAULT: memory access 0x%llx (%zu bytes) unmapped\\n",
+                     static_cast<unsigned long long>(addr), access_size);
+        faulted_ = true;
+        return;
     }
 
     switch (insn.op) {
