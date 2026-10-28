@@ -213,7 +213,7 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
             }
             const char* name = reinterpret_cast<const char*>(cursor + rp->path.offset);
             const size_t remaining = lc->cmdsize - rp->path.offset;
-            const void* terminator = std::memchr(name, '\\0', remaining);
+            const void* terminator = std::memchr(name, '\0', remaining);
             if (!terminator) {
                 error_msg_ = "Unterminated rpath string";
                 return false;
