@@ -254,7 +254,11 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
                 error_msg_ = "Unterminated dylib name";
                 return false;
             }
-            binary.dylibs.emplace_back(name, static_cast<const char*>(terminator) - name);
+            const std::string dependency(name, static_cast<const char*>(terminator) - name);
+            if (lc->cmd == LC_LOAD_WEAK_DYLIB)
+                binary.weak_dylibs.push_back(dependency);
+            else
+                binary.dylibs.push_back(dependency);
             break;
         }
         default:
