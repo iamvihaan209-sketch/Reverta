@@ -83,7 +83,7 @@ int main() {
     uint8_t* mapped = interpreter.guest_to_host(static_cast<uint64_t>(guest_map), 16);
     assert(mapped != nullptr);
     mapped[0] = 0x5a;
-    assert(interpreter.guest_to_host(static_cast<uint64_t>(guest_map) + 15, 2) == nullptr);
+    assert(interpreter.guest_to_host(static_cast<uint64_t>(guest_map) + 4095, 2) == nullptr);
     assert(interpreter.munmap_guest(static_cast<uint64_t>(guest_map), 4096) == 0);
     assert(interpreter.guest_to_host(static_cast<uint64_t>(guest_map), 1) == nullptr);
 
