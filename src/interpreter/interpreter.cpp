@@ -127,17 +127,23 @@ int64_t Interpreter::munmap_guest(uint64_t address, size_t length) {
     return -EINVAL;
 }
 
-uint8_t* Interpreter::guest_to_host(uint64_t vaddr, size_t access_size) const {
+uint8_t* Interpreter::guest_to_host(uint64_t vaddr, size_t access_size, GuestAccess access) const {
     if (access_size == 0) return nullptr;
     for (const auto& seg : binary_.segments) {
         if (!seg.mapped) continue;
         const uint64_t guest_base = seg.mapped_vmaddr ? seg.mapped_vmaddr : seg.vmaddr;
         if (vaddr < guest_base) continue;
         const uint64_t offset = vaddr - guest_base;
-        if (offset < seg.vmsize && access_size <= seg.vmsize - offset)
-            return seg.mapped + offset;
+        if (offset < seg.vmsize && access_size <= seg.vmsize - offset) {
+            const int prot = static_cast<int>(seg.initprot);
+            const bool permitted =
+                (access == GuestAccess::Read && (prot & PROT_READ)) ||
+                (access == GuestAccess::Write && (prot & PROT_WRITE)) ||
+                (access == GuestAccess::Execute && (prot & PROT_EXEC));
+            if (permitted) return seg.mapped + offset;
+        }
     }
-    if (binary_.stack_size && vaddr >= binary_.stack_base) {
+    if (access != GuestAccess::Execute && binary_.stack_size && vaddr >= binary_.stack_base) {
         const uint64_t offset = vaddr - binary_.stack_base;
         if (offset < binary_.stack_size && access_size <= binary_.stack_size - offset)
             return reinterpret_cast<uint8_t*>(vaddr);
@@ -145,8 +151,13 @@ uint8_t* Interpreter::guest_to_host(uint64_t vaddr, size_t access_size) const {
     for (const auto& mapping : dynamic_mappings_) {
         if (vaddr < mapping.guest_base) continue;
         const uint64_t offset = vaddr - mapping.guest_base;
-        if (offset < mapping.size && access_size <= mapping.size - offset)
-            return mapping.host + offset;
+        if (offset < mapping.size && access_size <= mapping.size - offset) {
+            const bool permitted =
+                (access == GuestAccess::Read && (mapping.prot & PROT_READ)) ||
+                (access == GuestAccess::Write && (mapping.prot & PROT_WRITE)) ||
+                (access == GuestAccess::Execute && (mapping.prot & PROT_EXEC));
+            if (permitted) return mapping.host + offset;
+        }
     }
     return nullptr;
 }
@@ -350,7 +361,7 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
     if (insn.op == Arm64Op::LDRB || insn.op == Arm64Op::STRB) access_size = 1;
     else if (insn.op == Arm64Op::LDRH || insn.op == Arm64Op::STRH) access_size = 2;
     else if (insn.op == Arm64Op::LDP || insn.op == Arm64Op::STP) access_size *= 2;
-    uint8_t* host = guest_to_host(addr, access_size);
+    uint8_t* host = guest_to_host(addr, access_size, is_load ? GuestAccess::Read : GuestAccess::Write);
     if (!host) {
         std::fprintf(stderr, "[reverta] FAULT: memory access 0x%llx (%zu bytes) unmapped\n",
                      static_cast<unsigned long long>(addr), access_size);
