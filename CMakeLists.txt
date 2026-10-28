@@ -86,4 +86,14 @@ if(BUILD_TESTING)
     )
     target_include_directories(reverta_fp_smoke PRIVATE include)
     add_test(NAME reverta_fp_smoke COMMAND reverta_fp_smoke)
+
+    add_executable(reverta_integration_smoke
+        tests/integration_smoke.cpp
+        src/loader/macho_loader.cpp
+        src/interpreter/interpreter.cpp
+        src/decoder/arm64_decoder.cpp
+        src/jit/jit_compiler.cpp
+    )
+    target_include_directories(reverta_integration_smoke PRIVATE include)
+    add_test(NAME reverta_integration_smoke COMMAND reverta_integration_smoke)
 endif()
