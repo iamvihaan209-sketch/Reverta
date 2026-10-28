@@ -280,7 +280,7 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
         uint64_t seg_offset = 0;
         uint32_t seg_index = 0;
         int64_t addend = 0;
-        (void)addend;
+        bool weak_import = false;
 
         auto bind_once = [&]() -> bool {
             if (seg_index >= seg_vmaddrs.size() || sym_name.empty()) return false;
@@ -291,7 +291,7 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
                 return false;
             }
             const GuestPtr resolved = resolve_symbol(sym_name);
-            if (!resolved) return false;
+            if (!resolved && !weak_import) return false;
             GuestPtr value = 0;
             if (!add_signed_checked(resolved, addend, value)) {
                 std::fprintf(stderr, "[dyld] bind addend overflows symbol address: %s\n", sym_name.c_str());
@@ -321,6 +321,7 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
                 const auto* terminator = static_cast<const uint8_t*>(nul);
                 sym_name.assign(reinterpret_cast<const char*>(p),
                                 static_cast<size_t>(terminator - p));
+                weak_import = (imm & 0x01) != 0;
                 p = terminator + 1;
                 break;
             }
@@ -423,8 +424,10 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
 
     std::vector<std::string> import_names;
     std::vector<int64_t> import_addends;
+    std::vector<bool> import_weak;
     import_names.reserve(header.imports_count);
     import_addends.reserve(header.imports_count);
+    import_weak.reserve(header.imports_count);
     for (uint32_t i = 0; i < header.imports_count; ++i) {
         const uint8_t* entry = payload + header.imports_offset +
                                static_cast<size_t>(i) * import_entry_size;
@@ -432,11 +435,14 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
         std::memcpy(&raw, entry, header.imports_format == 3 ? 8 : 4);
         uint32_t name_offset = 0;
         int64_t addend = 0;
+        bool weak_import = false;
         if (header.imports_format == 3) {
             name_offset = static_cast<uint32_t>(raw >> 32);
+            weak_import = ((raw >> 16) & 1) != 0;
             std::memcpy(&addend, entry + 8, sizeof(addend));
         } else {
             name_offset = static_cast<uint32_t>(raw >> 9);
+            weak_import = ((raw >> 8) & 1) != 0;
             if (header.imports_format == 2) {
                 int32_t small_addend = 0;
                 std::memcpy(&small_addend, entry + 4, sizeof(small_addend));
@@ -451,6 +457,7 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
         if (!nul) return false;
         import_names.emplace_back(name, static_cast<const char*>(nul) - name);
         import_addends.push_back(addend);
+        import_weak.push_back(weak_import);
     }
 
     if (header.starts_offset > payload_size - sizeof(uint32_t)) return false;
@@ -548,7 +555,7 @@ bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
                         if (ordinal >= import_names.size()) return false;
                         const int8_t pointer_addend = static_cast<int8_t>((value >> 24) & 0xff);
                         const GuestPtr resolved = resolve_symbol(import_names[ordinal]);
-                        if (!resolved) return false;
+                        if (!resolved && !import_weak[ordinal]) return false;
                         uint64_t bound = 0;
                         if (!add_signed_checked(resolved, import_addends[ordinal], bound) ||
                             !add_signed_checked(bound, static_cast<int64_t>(pointer_addend), bound))
