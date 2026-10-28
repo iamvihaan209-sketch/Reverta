@@ -350,7 +350,9 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
             error_msg_ = "Failed to allocate stack";
             return false;
         }
-        binary.stack_top = reinterpret_cast<uint64_t>(stack) + STACK_SIZE;
+        binary.stack_base = reinterpret_cast<uint64_t>(stack);
+        binary.stack_size = STACK_SIZE;
+        binary.stack_top = binary.stack_base + STACK_SIZE;
         binary.stack_top &= ~0xFULL;
     }
     return true;
