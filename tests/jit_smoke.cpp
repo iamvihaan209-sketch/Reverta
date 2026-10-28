@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <sys/mman.h>
 
 static void put32(uint8_t* p, uint32_t v) {
     std::memcpy(p, &v, sizeof(v));
@@ -21,6 +22,7 @@ int main() {
     text.vmaddr = 0x1000;
     text.mapped_vmaddr = 0x20001000; // simulate a non-zero guest slide
     text.vmsize = sizeof(code);
+    text.initprot = PROT_READ | PROT_EXEC;
     text.mapped = code;
     binary.segments.push_back(text);
 
