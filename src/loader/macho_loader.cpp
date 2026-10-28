@@ -248,7 +248,7 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
     binary.base_address = slide;
 
     for (auto& seg : binary.segments) {
-        if (seg.vmsize == 0) continue;
+        if (seg.vmsize == 0 || seg.name == "__PAGEZERO") continue;
         if (seg.filesize > seg.vmsize || seg.fileoff > size ||
             seg.filesize > size - seg.fileoff ||
             seg.vmsize > std::numeric_limits<size_t>::max()) {
