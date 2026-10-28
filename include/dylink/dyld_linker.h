@@ -55,6 +55,7 @@ private:
     bool parse_chained_fixups(const uint8_t* data, size_t size,
                                uint64_t slide,
                                const std::function<uint8_t*(uint64_t)>& g2h);
+    bool parse_exports(const uint8_t* data, size_t size, uint64_t slide);
 
     std::vector<LoadedDylib> dylibs_;
     std::unordered_map<std::string, GuestPtr> symbol_map_;
