@@ -4,6 +4,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <cmath>
+#include <cerrno>
+#include <limits>
+#include <sys/mman.h>
+#include <unistd.h>
 
 Interpreter::Interpreter(const LoadedBinary& binary)
     : binary_(binary)
@@ -12,6 +16,110 @@ Interpreter::Interpreter(const LoadedBinary& binary)
     state_.sp = binary.stack_top;
     // Align SP to 16 bytes (AArch64 ABI requirement)
     state_.sp &= ~0xFULL;
+}
+
+Interpreter::~Interpreter() {
+    for (const auto& mapping : dynamic_mappings_)
+        if (mapping.host && mapping.size) ::munmap(mapping.host, mapping.size);
+}
+
+bool Interpreter::guest_range_overlaps(uint64_t address, size_t size) const {
+    if (size == 0 || address > UINT64_MAX - size) return true;
+    const uint64_t end = address + size;
+    auto overlaps = [&](uint64_t base, uint64_t extent) {
+        if (extent == 0 || base > UINT64_MAX - extent) return false;
+        return address < base + extent && base < end;
+    };
+    for (const auto& seg : binary_.segments) {
+        const uint64_t base = seg.mapped_vmaddr ? seg.mapped_vmaddr : seg.vmaddr;
+        if (overlaps(base, seg.vmsize)) return true;
+    }
+    if (overlaps(binary_.stack_base, binary_.stack_size)) return true;
+    for (const auto& mapping : dynamic_mappings_)
+        if (overlaps(mapping.guest_base, mapping.size)) return true;
+    return false;
+}
+
+int64_t Interpreter::mmap_guest(uint64_t requested_address, size_t length, int prot,
+                                int flags, int fd, int64_t offset) {
+    if (length == 0 || offset < 0) return -EINVAL;
+    const long page_result = ::sysconf(_SC_PAGESIZE);
+    const size_t page_size = page_result > 0 ? static_cast<size_t>(page_result) : 4096;
+    if (length > std::numeric_limits<size_t>::max() - (page_size - 1))
+        return -ENOMEM;
+    const size_t map_size = (length + page_size - 1) & ~(page_size - 1);
+    if ((flags & MAP_FIXED) && (requested_address == 0 || requested_address % page_size != 0))
+        return -EINVAL;
+    if (offset % static_cast<int64_t>(page_size) != 0) return -EINVAL;
+
+    uint64_t guest_address = 0;
+    if (requested_address != 0 && requested_address % page_size == 0 &&
+        !guest_range_overlaps(requested_address, map_size)) {
+        guest_address = requested_address;
+    } else if (flags & MAP_FIXED) {
+        return -EINVAL;
+    } else {
+        guest_address = (next_guest_mapping_ + page_size - 1) &
+                        ~(static_cast<uint64_t>(page_size) - 1);
+        while (guest_range_overlaps(guest_address, map_size)) {
+            if (guest_address > UINT64_MAX - map_size - page_size) return -ENOMEM;
+            guest_address += map_size + page_size;
+        }
+        if (guest_address > static_cast<uint64_t>(INT64_MAX) - map_size) return -ENOMEM;
+        next_guest_mapping_ = guest_address + map_size + page_size;
+    }
+
+    // Guest addresses are virtual IDs; never pass them to host mmap as a fixed
+    // address. Keep the host mapping readable/writable and track guest prot
+    // separately so interpreter accesses cannot crash the host on guest faults.
+    void* host = ::mmap(nullptr, map_size, prot | PROT_READ | PROT_WRITE,
+                        flags & ~MAP_FIXED, fd, static_cast<off_t>(offset));
+    if (host == MAP_FAILED) return -errno;
+    dynamic_mappings_.push_back({guest_address, map_size,
+                                 static_cast<uint8_t*>(host), prot});
+    return static_cast<int64_t>(guest_address);
+}
+
+int64_t Interpreter::munmap_guest(uint64_t address, size_t length) {
+    if (length == 0) return -EINVAL;
+    const long page_result = ::sysconf(_SC_PAGESIZE);
+    const size_t page_size = page_result > 0 ? static_cast<size_t>(page_result) : 4096;
+    if (address % page_size != 0 ||
+        length > std::numeric_limits<size_t>::max() - (page_size - 1))
+        return -EINVAL;
+    const size_t map_size = (length + page_size - 1) & ~(page_size - 1);
+    if (address > UINT64_MAX - map_size) return -EINVAL;
+
+    for (size_t i = 0; i < dynamic_mappings_.size(); ++i) {
+        auto& mapping = dynamic_mappings_[i];
+        if (address < mapping.guest_base) continue;
+        const uint64_t offset64 = address - mapping.guest_base;
+        if (offset64 > mapping.size || map_size > mapping.size - offset64) continue;
+        const size_t offset = static_cast<size_t>(offset64);
+        uint8_t* host_start = mapping.host + offset;
+        if (::munmap(host_start, map_size) != 0) return -errno;
+
+        const size_t old_size = mapping.size;
+        const uint64_t old_base = mapping.guest_base;
+        uint8_t* const old_host = mapping.host;
+        const int old_prot = mapping.prot;
+        if (offset == 0 && map_size == old_size) {
+            dynamic_mappings_.erase(dynamic_mappings_.begin() + static_cast<std::ptrdiff_t>(i));
+        } else if (offset == 0) {
+            mapping.guest_base += map_size;
+            mapping.host += map_size;
+            mapping.size -= map_size;
+        } else if (offset + map_size == old_size) {
+            mapping.size = offset;
+        } else {
+            mapping.size = offset;
+            dynamic_mappings_.push_back({old_base + offset + map_size,
+                                         old_size - offset - map_size,
+                                         old_host + offset + map_size, old_prot});
+        }
+        return 0;
+    }
+    return -EINVAL;
 }
 
 uint8_t* Interpreter::guest_to_host(uint64_t vaddr, size_t access_size) const {
@@ -28,6 +136,12 @@ uint8_t* Interpreter::guest_to_host(uint64_t vaddr, size_t access_size) const {
         const uint64_t offset = vaddr - binary_.stack_base;
         if (offset < binary_.stack_size && access_size <= binary_.stack_size - offset)
             return reinterpret_cast<uint8_t*>(vaddr);
+    }
+    for (const auto& mapping : dynamic_mappings_) {
+        if (vaddr < mapping.guest_base) continue;
+        const uint64_t offset = vaddr - mapping.guest_base;
+        if (offset < mapping.size && access_size <= mapping.size - offset)
+            return mapping.host + offset;
     }
     return nullptr;
 }
