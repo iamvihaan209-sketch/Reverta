@@ -181,6 +181,10 @@ Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
         out.op = Arm64Op::FNEG;
         return out;
     }
+    if ((insn & 0xFF20FC1F) == 0x1E202010) {
+        out.op = Arm64Op::FCMPE;
+        return out;
+    }
     if ((insn & 0xFF20FC1F) == 0x1E202000) {
         out.op = Arm64Op::FCMP;
         return out;
