@@ -42,6 +42,9 @@ public:
 
     const std::string& error() const { return error_msg_; }
 
+    // Apply final Mach-O segment protections after the linker has written fixups.
+    bool finalize_protections(const LoadedBinary& binary);
+
 private:
     bool parse_load_commands(const uint8_t* data, size_t size, LoadedBinary& binary);
     bool map_segments(const uint8_t* data, size_t size, LoadedBinary& binary);
