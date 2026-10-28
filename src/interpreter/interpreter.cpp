@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <cmath>
 
 Interpreter::Interpreter(const LoadedBinary& binary)
     : binary_(binary)
@@ -148,6 +149,13 @@ void Interpreter::execute(const Arm64Insn& insn) {
         execute_load_store(insn);
         break;
 
+    // Scalar floating-point operations use the SIMD/FP register bank.
+    case Arm64Op::FADD: case Arm64Op::FSUB:
+    case Arm64Op::FMUL: case Arm64Op::FDIV:
+    case Arm64Op::FCMP: case Arm64Op::FMOV:
+        execute_fp(insn);
+        break;
+
     // Data processing
     default:
         execute_data_proc(insn);
@@ -267,6 +275,74 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
     default:
         break;
     }
+}
+
+// ── Scalar floating-point execution ──────────────────────────────────────────
+void Interpreter::execute_fp(const Arm64Insn& insn) {
+    if (insn.op == Arm64Op::FMOV) {
+        if (insn.is64) {
+            state_.q[insn.rd][0] = state_.q[insn.rn][0];
+        } else {
+            state_.q[insn.rd][0] = static_cast<uint32_t>(state_.q[insn.rn][0]);
+        }
+        state_.q[insn.rd][1] = 0;
+        return;
+    }
+
+    if (insn.is64) {
+        double a = 0.0, b = 0.0, result = 0.0;
+        std::memcpy(&a, &state_.q[insn.rn][0], sizeof(a));
+        std::memcpy(&b, &state_.q[insn.rm][0], sizeof(b));
+        if (insn.op == Arm64Op::FCMP) {
+            if (std::isnan(a) || std::isnan(b)) {
+                state_.n = false; state_.z = false; state_.c = true; state_.v = true;
+            } else {
+                state_.n = a < b;
+                state_.z = a == b;
+                state_.c = a >= b;
+                state_.v = false;
+            }
+            return;
+        }
+        switch (insn.op) {
+        case Arm64Op::FADD: result = a + b; break;
+        case Arm64Op::FSUB: result = a - b; break;
+        case Arm64Op::FMUL: result = a * b; break;
+        case Arm64Op::FDIV: result = a / b; break;
+        default: return;
+        }
+        std::memcpy(&state_.q[insn.rd][0], &result, sizeof(result));
+        state_.q[insn.rd][1] = 0;
+        return;
+    }
+
+    float a = 0.0f, b = 0.0f, result = 0.0f;
+    const uint32_t a_bits = static_cast<uint32_t>(state_.q[insn.rn][0]);
+    const uint32_t b_bits = static_cast<uint32_t>(state_.q[insn.rm][0]);
+    std::memcpy(&a, &a_bits, sizeof(a));
+    std::memcpy(&b, &b_bits, sizeof(b));
+    if (insn.op == Arm64Op::FCMP) {
+        if (std::isnan(a) || std::isnan(b)) {
+            state_.n = false; state_.z = false; state_.c = true; state_.v = true;
+        } else {
+            state_.n = a < b;
+            state_.z = a == b;
+            state_.c = a >= b;
+            state_.v = false;
+        }
+        return;
+    }
+    switch (insn.op) {
+    case Arm64Op::FADD: result = a + b; break;
+    case Arm64Op::FSUB: result = a - b; break;
+    case Arm64Op::FMUL: result = a * b; break;
+    case Arm64Op::FDIV: result = a / b; break;
+    default: return;
+    }
+    uint32_t result_bits = 0;
+    std::memcpy(&result_bits, &result, sizeof(result));
+    state_.q[insn.rd][0] = result_bits;
+    state_.q[insn.rd][1] = 0;
 }
 
 // ── Data processing execution ─────────────────────────────────────────────────
