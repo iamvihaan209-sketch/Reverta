@@ -111,6 +111,8 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
     if (mh->sizeofcmds > size - sizeof(mach_header_64)) return false;
     const uint8_t* lc = data + sizeof(mach_header_64);
 
+    const uint8_t* rebase_data = nullptr;
+    uint32_t       rebase_size = 0;
     const uint8_t* bind_data = nullptr;
     uint32_t       bind_size = 0;
     const uint8_t* lazy_bind_data = nullptr;
@@ -126,9 +128,12 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
         if (cmd->cmd == LC_DYLD_INFO || cmd->cmd == LC_DYLD_INFO_ONLY) {
             if (cmd->cmdsize < sizeof(dyld_info_command)) return false;
             auto* di = reinterpret_cast<const dyld_info_command*>(lc);
-            if (di->bind_off > size || di->bind_size > size - di->bind_off ||
+            if (di->rebase_off > size || di->rebase_size > size - di->rebase_off ||
+                di->bind_off > size || di->bind_size > size - di->bind_off ||
                 di->lazy_bind_off > size || di->lazy_bind_size > size - di->lazy_bind_off)
                 return false;
+            rebase_data    = data + di->rebase_off;
+            rebase_size    = di->rebase_size;
             bind_data      = data + di->bind_off;
             bind_size      = di->bind_size;
             lazy_bind_data = data + di->lazy_bind_off;
@@ -136,6 +141,101 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
         }
         lc += cmd->cmdsize;
     }
+
+    auto process_rebases = [&](const uint8_t* rd, uint32_t rs) -> bool {
+        if (rs == 0) return true;
+        if (!rd) return false;
+        std::vector<uint64_t> seg_vmaddrs;
+        const uint8_t* slc = data + sizeof(mach_header_64);
+        for (uint32_t i = 0; i < mh->ncmds; ++i) {
+            const auto* sc = reinterpret_cast<const load_command*>(slc);
+            if (sc->cmd == LC_SEGMENT_64) {
+                const auto* seg = reinterpret_cast<const segment_command_64*>(slc);
+                if (seg->vmaddr > UINT64_MAX - slide) return false;
+                seg_vmaddrs.push_back(seg->vmaddr + slide);
+            }
+            slc += sc->cmdsize;
+        }
+
+        const uint8_t* p = rd;
+        const uint8_t* end = rd + rs;
+        uint32_t seg_index = 0;
+        uint64_t seg_offset = 0;
+        uint8_t type = 1; // DYLD_REBASE_TYPE_POINTER
+        auto rebase_once = [&]() -> bool {
+            if (type != 1 || seg_index >= seg_vmaddrs.size() ||
+                seg_offset > UINT64_MAX - seg_vmaddrs[seg_index]) return false;
+            uint8_t* host = g2h(seg_vmaddrs[seg_index] + seg_offset);
+            if (!host) return false;
+            uint64_t value = 0;
+            std::memcpy(&value, host, sizeof(value));
+            if (value > UINT64_MAX - slide) return false;
+            value += slide;
+            std::memcpy(host, &value, sizeof(value));
+            return true;
+        };
+
+        while (p < end) {
+            const uint8_t byte = *p++;
+            const uint8_t op = byte & 0xf0;
+            const uint8_t imm = byte & 0x0f;
+            uint64_t u = 0;
+            switch (op) {
+            case 0x00: return true; // DONE
+            case 0x10: // SET_TYPE_IMM
+                if (imm != 1) {
+                    std::fprintf(stderr, "[dyld] unsupported classic rebase type %u\n", imm);
+                    return false;
+                }
+                type = imm;
+                break;
+            case 0x20: // SET_SEGMENT_AND_OFFSET_ULEB
+                seg_index = imm;
+                if (!read_uleb128(p, end, seg_offset)) return false;
+                break;
+            case 0x30: // ADD_ADDR_ULEB
+                if (!read_uleb128(p, end, u) || u > UINT64_MAX - seg_offset) return false;
+                seg_offset += u;
+                break;
+            case 0x40: // ADD_ADDR_IMM_SCALED
+                if (seg_offset > UINT64_MAX - static_cast<uint64_t>(imm) * 8) return false;
+                seg_offset += static_cast<uint64_t>(imm) * 8;
+                break;
+            case 0x50: // DO_REBASE_IMM_TIMES
+                for (uint8_t n = 0; n < imm; ++n) {
+                    if (!rebase_once() || seg_offset > UINT64_MAX - 8) return false;
+                    seg_offset += 8;
+                }
+                break;
+            case 0x60: // DO_REBASE_ULEB_TIMES
+                if (!read_uleb128(p, end, u) || u > rs) return false;
+                for (uint64_t n = 0; n < u; ++n) {
+                    if (!rebase_once() || seg_offset > UINT64_MAX - 8) return false;
+                    seg_offset += 8;
+                }
+                break;
+            case 0x70: // DO_REBASE_ADD_ADDR_ULEB
+                if (!read_uleb128(p, end, u) || !rebase_once() ||
+                    seg_offset > UINT64_MAX - 8 || u > UINT64_MAX - seg_offset - 8) return false;
+                seg_offset += u + 8;
+                break;
+            case 0x80: { // DO_REBASE_ULEB_TIMES_SKIPPING_ULEB
+                uint64_t count = 0, skip = 0;
+                if (!read_uleb128(p, end, count) || !read_uleb128(p, end, skip) ||
+                    count > rs) return false;
+                for (uint64_t n = 0; n < count; ++n) {
+                    if (!rebase_once() || seg_offset > UINT64_MAX - 8 ||
+                        skip > UINT64_MAX - seg_offset - 8) return false;
+                    seg_offset += skip + 8;
+                }
+                break;
+            }
+            default:
+                return false;
+            }
+        }
+        return true;
+    };
 
     auto process_binds = [&](const uint8_t* bd, uint32_t bs) -> bool {
         if (bs == 0) return true;
@@ -241,7 +341,8 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
         }
         return true;
     };
-    return process_binds(bind_data, bind_size) &&
+    return process_rebases(rebase_data, rebase_size) &&
+           process_binds(bind_data, bind_size) &&
            process_binds(lazy_bind_data, lazy_bind_size);
 }
 
