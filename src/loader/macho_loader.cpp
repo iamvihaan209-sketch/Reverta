@@ -106,6 +106,11 @@ std::optional<LoadedBinary> MachOLoader::load(const std::string& path, uint64_t 
         ::munmap(data, file_size);
         return std::nullopt;
     }
+    if (mh->filetype != MH_EXECUTE && mh->filetype != MH_DYLIB) {
+        error_msg_ = "Unsupported Mach-O file type (expected executable or dylib)";
+        ::munmap(data, file_size);
+        return std::nullopt;
+    }
 
     LoadedBinary binary{};
     binary.is_pie = (mh->flags & MH_PIE) != 0;
