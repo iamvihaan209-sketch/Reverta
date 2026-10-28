@@ -62,6 +62,55 @@ static std::vector<uint8_t> make_macho(const std::vector<uint8_t>& binds,
     return image;
 }
 
+static std::vector<uint8_t> make_chained_macho() {
+    const size_t commands_size = sizeof(segment_command_64) + sizeof(linkedit_data_command);
+    const size_t payload_off = sizeof(mach_header_64) + commands_size;
+    std::vector<uint8_t> payload(60, 0);
+    auto put32 = [&](size_t off, uint32_t value) { std::memcpy(payload.data() + off, &value, 4); };
+    auto put16 = [&](size_t off, uint16_t value) { std::memcpy(payload.data() + off, &value, 2); };
+    // dyld_chained_fixups_header
+    put32(0, 0);  // fixups_version
+    put32(4, 28); // starts_offset
+    put32(8, 60); // imports_offset (no imports)
+    put32(12, 60);// symbols_offset (empty pool)
+    put32(16, 0); // imports_count
+    put32(20, 1); // DYLD_CHAINED_IMPORT
+    put32(24, 0); // uncompressed symbols
+    // starts_in_image with one segment; segment info is 8 bytes after starts_offset.
+    put32(28, 1);
+    put32(32, 8);
+    // starts_in_segment: size, page size, pointer format, segment offset,
+    // max_valid_pointer, page_count, one page start.
+    put32(36, 24);
+    put16(40, 4096);
+    put16(42, 2); // DYLD_CHAINED_PTR_64
+    put32(44, 0); put32(48, 0); // segment_offset low/high
+    put32(52, 0); // max_valid_pointer
+    put16(56, 1); // page_count
+    put16(58, 8); // chain begins at offset 8 in page
+
+    std::vector<uint8_t> image(payload_off + payload.size(), 0);
+    auto* mh = reinterpret_cast<mach_header_64*>(image.data());
+    mh->magic = MH_MAGIC_64;
+    mh->cputype = CPU_TYPE_ARM64;
+    mh->ncmds = 2;
+    mh->sizeofcmds = static_cast<uint32_t>(commands_size);
+    auto* seg = reinterpret_cast<segment_command_64*>(image.data() + sizeof(mach_header_64));
+    seg->cmd = LC_SEGMENT_64;
+    seg->cmdsize = sizeof(segment_command_64);
+    std::memcpy(seg->segname, "__DATA", 6);
+    seg->vmaddr = 0x1000;
+    seg->vmsize = 0x1000;
+    auto* cf = reinterpret_cast<linkedit_data_command*>(
+        image.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
+    cf->cmd = LC_DYLD_CHAINED_FIXUPS;
+    cf->cmdsize = sizeof(linkedit_data_command);
+    cf->dataoff = static_cast<uint32_t>(payload_off);
+    cf->datasize = static_cast<uint32_t>(payload.size());
+    std::memcpy(image.data() + payload_off, payload.data(), payload.size());
+    return image;
+}
+
 int main() {
     auto& interceptor = DylibInterceptor::instance();
     interceptor.register_symbol("_test_import", [](uint64_t*, int) -> uint64_t { return 0; });
@@ -97,6 +146,16 @@ int main() {
     assert(linker.apply_fixups(rebase_image.data(), rebase_image.size(), 0x1000,
                                translate_slid));
     uint64_t rebased = 0;
+    std::memcpy(&rebased, guest_memory + 8, sizeof(rebased));
+    assert(rebased == 0x2234);
+
+    // A bounded DYLD_CHAINED_PTR_64 rebase also applies the image slide.
+    auto chained_image = make_chained_macho();
+    original_pointer = 0x1234;
+    std::memcpy(guest_memory + 8, &original_pointer, sizeof(original_pointer));
+    assert(linker.apply_fixups(chained_image.data(), chained_image.size(), 0x1000,
+                               translate_slid));
+    rebased = 0;
     std::memcpy(&rebased, guest_memory + 8, sizeof(rebased));
     assert(rebased == 0x2234);
 
