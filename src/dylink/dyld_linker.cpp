@@ -614,6 +614,7 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
     const uint8_t* trie = data + export_off;
     const size_t trie_size = export_size;
     std::unordered_set<uint64_t> active;
+    std::unordered_map<std::string, GuestPtr> parsed_exports;
     size_t nodes_visited = 0;
     std::function<bool(uint64_t, const std::string&, size_t)> walk;
     walk = [&](uint64_t offset, const std::string& prefix, size_t depth) -> bool {
@@ -631,7 +632,7 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
         if (terminal_size != 0) {
             uint64_t flags = 0, address = 0;
             if (!read_uleb128(p, terminal_end, flags) ||
-                (flags & 0x08) != 0 || (flags & 0x10) != 0 ||
+                (flags & 0x08) != 0 || (flags & 0x10) != 0 || (flags & ~uint64_t{0x1f}) != 0 ||
                 !read_uleb128(p, terminal_end, address)) {
                 active.erase(offset);
                 std::fprintf(stderr, "[dyld] unsupported or malformed export terminal for %s\n",
@@ -653,7 +654,7 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
                 }
                 value = image_base + address;
             }
-            if (!prefix.empty()) symbol_map_[prefix] = value;
+            if (!prefix.empty()) parsed_exports[prefix] = value;
         }
         p = terminal_end;
         if (p >= end) {
@@ -685,6 +686,8 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
         std::fprintf(stderr, "[dyld] failed to parse export trie safely\n");
         return false;
     }
+    for (const auto& [name, value] : parsed_exports)
+        symbol_map_[name] = value;
     return true;
 }
 
