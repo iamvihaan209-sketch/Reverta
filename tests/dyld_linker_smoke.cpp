@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -94,11 +95,13 @@ static std::vector<uint8_t> make_export_macho() {
     return image;
 }
 
-static std::vector<uint8_t> make_bundled_dylib() {
-    const std::vector<uint8_t> trie = {
-        0x00, 0x01, '_','b','u','n','d','l','e','d',0x00, 0x0c,
-        0x02, 0x00, 0x20, 0x00
-    };
+static std::vector<uint8_t> make_bundled_dylib(const std::string& symbol) {
+    std::vector<uint8_t> trie = {0x00, 0x01};
+    for (char ch : symbol) trie.push_back(static_cast<uint8_t>(ch));
+    trie.push_back(0);
+    trie.push_back(static_cast<uint8_t>(trie.size() + 1)); // child node offset
+    trie.insert(trie.end(), {0x02, 0x00, 0x20, 0x00}); // regular export at image + 0x20
+
     const size_t commands_size = sizeof(segment_command_64) + sizeof(linkedit_data_command);
     const size_t payload_off = sizeof(mach_header_64) + commands_size;
     std::vector<uint8_t> image(payload_off + trie.size(), 0);
@@ -122,6 +125,18 @@ static std::vector<uint8_t> make_bundled_dylib() {
     ex->datasize = static_cast<uint32_t>(trie.size());
     std::memcpy(image.data() + payload_off, trie.data(), trie.size());
     return image;
+}
+
+static void write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    assert(fd >= 0);
+    size_t written = 0;
+    while (written < bytes.size()) {
+        const ssize_t n = ::write(fd, bytes.data() + written, bytes.size() - written);
+        assert(n > 0);
+        written += static_cast<size_t>(n);
+    }
+    ::close(fd);
 }
 
 static std::vector<uint8_t> make_chained_macho(bool with_import = false) {
@@ -210,25 +225,27 @@ int main() {
     bad_export->dataoff = UINT32_MAX;
     assert(!linker.link(malformed_export.data(), malformed_export.size(), 0x1000, {}));
 
-    // Load an absolute-path bundled MH_DYLIB, parse its exports, and retain its mapping.
-    auto bundled_image = make_bundled_dylib();
-    char bundled_path[] = "/tmp/reverta-bundled-test-XXXXXX";
-    const int bundled_fd = ::mkstemp(bundled_path);
-    assert(bundled_fd >= 0);
-    size_t bundled_written = 0;
-    while (bundled_written < bundled_image.size()) {
-        const ssize_t n = ::write(bundled_fd, bundled_image.data() + bundled_written,
-                                  bundled_image.size() - bundled_written);
-        assert(n > 0);
-        bundled_written += static_cast<size_t>(n);
-    }
-    ::close(bundled_fd);
-    const std::string bundled_path_copy = bundled_path;
+    // Load absolute and @rpath bundled MH_DYLIBs and resolve their exports.
+    char directory_template[] = "/tmp/reverta-dylib-test-XXXXXX";
+    char* directory_raw = ::mkdtemp(directory_template);
+    assert(directory_raw != nullptr);
+    const std::string directory = directory_raw;
+    const std::string frameworks = directory + "/Frameworks";
+    assert(::mkdir(frameworks.c_str(), 0700) == 0);
+    const std::string bundled_path = directory + "/libbundled.dylib";
+    const std::string rpath_path = frameworks + "/librpath.dylib";
+    write_bytes(bundled_path, make_bundled_dylib("_bundled"));
+    write_bytes(rpath_path, make_bundled_dylib("_rpathlib"));
+    const std::string executable_path = directory + "/main";
     assert(linker.link(export_image.data(), export_image.size(), 0x1000,
-                       {bundled_path_copy}, "/tmp/reverta-main", {}));
-    ::unlink(bundled_path);
+                       {bundled_path, "@rpath/librpath.dylib"}, executable_path,
+                       {"@executable_path/Frameworks"}));
     assert(linker.resolve_symbol("_bundled") == 0x1100000020ULL);
-
+    assert(linker.resolve_symbol("_rpathlib") == 0x1200000020ULL);
+    ::unlink(bundled_path.c_str());
+    ::unlink(rpath_path.c_str());
+    ::rmdir(frameworks.c_str());
+    ::rmdir(directory.c_str());
 
     // Classic pointer rebase adds the selected image's slide to a pointer slot.
     auto rebase_image = make_macho({}, {0x20, 0x08, 0x51, 0x00});
