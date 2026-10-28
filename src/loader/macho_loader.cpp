@@ -207,7 +207,7 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
                 return false;
             }
             const auto* rp = reinterpret_cast<const rpath_command*>(cursor);
-            if (rp->path.offset >= lc->cmdsize) {
+            if (rp->path.offset < sizeof(rpath_command) || rp->path.offset >= lc->cmdsize) {
                 error_msg_ = "Rpath string offset is out of bounds";
                 return false;
             }
@@ -231,7 +231,7 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
                 return false;
             }
             const auto* dl = reinterpret_cast<const dylib_command*>(cursor);
-            if (dl->dylib.name.offset >= lc->cmdsize) {
+            if (dl->dylib.name.offset < sizeof(dylib_command) || dl->dylib.name.offset >= lc->cmdsize) {
                 error_msg_ = "Dylib name offset is out of bounds";
                 return false;
             }
