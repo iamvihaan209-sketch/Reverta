@@ -34,6 +34,8 @@ Arm64Insn Arm64Decoder::decode(const uint8_t* pc, uint64_t vaddr) const {
     case 0b0010:
     case 0b1010: case 0b1011: // Branches, system, exceptions
         return decode_branches(insn, vaddr);
+    case 0b1111: // Scalar FP / SIMD encoding space; decode only known scalar FP forms
+        return decode_fp(insn, vaddr);
     default:
         break;
     }
@@ -144,6 +146,41 @@ Arm64Insn Arm64Decoder::decode_data_proc_reg(uint32_t insn, uint64_t pc) const {
             default:   out.op = Arm64Op::UNKNOWN;
             }
         }
+    }
+    return out;
+}
+
+// ── Scalar floating-point instructions ────────────────────────────────────────
+Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
+    Arm64Insn out{};
+    out.raw = insn;
+    out.pc = pc;
+    out.op = Arm64Op::UNKNOWN;
+    out.rd = bits(insn, 4, 0);
+    out.rn = bits(insn, 9, 5);
+    out.rm = bits(insn, 20, 16);
+    // Scalar type: 00 = S (32-bit), 01 = D (64-bit). Other types are unsupported.
+    const uint32_t type = bits(insn, 23, 22);
+    if (type > 1) return out;
+    out.is64 = type == 1;
+
+    const uint32_t fadd_mask = insn & 0xFF20FC00;
+    switch (fadd_mask) {
+    case 0x1E202800: out.op = Arm64Op::FADD; return out;
+    case 0x1E203800: out.op = Arm64Op::FSUB; return out;
+    case 0x1E200800: out.op = Arm64Op::FMUL; return out;
+    case 0x1E201800: out.op = Arm64Op::FDIV; return out;
+    default: break;
+    }
+
+    if ((insn & 0xFF20FC1F) == 0x1E202000) {
+        out.op = Arm64Op::FCMP;
+        return out;
+    }
+    // FMOV register: Rm and opcode fields are fixed; Rn/Rd select FP registers.
+    if ((insn & 0xFFBFFC00) == 0x1E204000) {
+        out.op = Arm64Op::FMOV;
+        return out;
     }
     return out;
 }
