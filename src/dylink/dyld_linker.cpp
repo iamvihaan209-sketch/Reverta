@@ -692,7 +692,7 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
         return false;
     }
     for (const auto& [name, value] : parsed_exports)
-        symbol_map_[name] = value;
+        symbol_map_.emplace(name, value);
     return true;
 }
 
