@@ -26,7 +26,9 @@ struct LoadedBinary {
     uint64_t entry_point = 0;     // raw file offset or preferred PC until segments are mapped; guest VA after load
     bool entry_point_is_file_offset = false;
     uint64_t base_address = 0;    // slide applied to preferred virtual addresses
-    uint64_t stack_top = 0;       // initial stack pointer
+    uint64_t stack_base = 0;      // host-backed guest stack range start
+    uint64_t stack_size = 0;
+    uint64_t stack_top = 0;       // initial stack pointer (exclusive upper bound)
     std::vector<std::string> dylibs;
     std::vector<std::string> rpaths;
     std::string path;
