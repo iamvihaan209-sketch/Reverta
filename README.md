@@ -18,7 +18,7 @@ The opposite of Apple's Rosetta 2.
 | 5 | Foundation / CoreFoundation stubs (CFString, CFData, CFArray, ...) | ✅ |
 | 5 | AppKit stubs (NSApplication, NSWindow, NSView, NSAlert) | ✅ |
 | 5 | Dylib interceptor (routes ARM64 dylib calls to host stubs) | ✅ |
-| 3 | Dynamic linker (full ARM64 dylib loading) | 🔲 |
+| 3 | Dynamic linker (classic dyld bind parsing + startup integration; chained fixups and bundled dylibs pending) | 🟡 |
 
 ## Build
 
@@ -73,7 +73,7 @@ ARM64 Mach-O binary
 
 - **v0.3** — JIT: translate ARM64 basic blocks → native x86-64, block cache
 - **v0.5.0-beta** — Stabilized JIT (shifts, CSEL, multiply variants), extended NEON (compare, saturating ops)
-- **v0.6** — Full dynamic linker: load + translate ARM64 dylibs on demand  
+- **v0.6** — Full dynamic linker: load + translate ARM64 dylibs on demand (in progress; classic binds are integrated, chained fixups and bundled dylibs remain unsupported)  
 - **v0.7** — Floating-point ops (FADD, FCMP, FMOV)
 - **v1.0** — Real apps running end-to-end
 
