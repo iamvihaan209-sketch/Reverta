@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <string>
+#include <sys/mman.h>
 #include <unistd.h>
 
 int main() {
@@ -16,7 +17,22 @@ int main() {
         if (offset >= sizeof(memory) || size > sizeof(memory) - offset) return nullptr;
         return memory + offset;
     };
-    SyscallTranslator syscalls(translate);
+    bool mmap_called = false, munmap_called = false;
+    SyscallTranslator syscalls(translate,
+        [&](uint64_t address, size_t length, int prot, int flags, int fd, int64_t offset) -> int64_t {
+            mmap_called = true;
+            assert(address == 0);
+            assert(length == 4096);
+            assert((prot & PROT_READ) != 0);
+            assert((flags & MAP_PRIVATE) != 0);
+            assert(fd == -1 && offset == 0);
+            return 0x4000000000LL;
+        },
+        [&](uint64_t address, size_t length) -> int64_t {
+            munmap_called = true;
+            assert(address == 0x4000000000ULL && length == 4096);
+            return 0;
+        });
     CpuState state{};
 
     int pipe_fds[2];
@@ -57,6 +73,20 @@ int main() {
     const int opened_fd = static_cast<int>(state.x[0]);
     ::close(opened_fd);
     ::unlink(file_path);
+
+    state.x[16] = Arm64Syscall::mmap;
+    state.x[0] = 0;
+    state.x[1] = 4096;
+    state.x[2] = PROT_READ | PROT_WRITE;
+    state.x[3] = MAP_PRIVATE | MAP_ANON;
+    state.x[4] = static_cast<uint64_t>(-1);
+    state.x[5] = 0;
+    assert(syscalls.handle(state));
+    assert(mmap_called && state.x[0] == 0x4000000000ULL);
+    state.x[16] = Arm64Syscall::munmap;
+    state.x[1] = 4096;
+    assert(syscalls.handle(state));
+    assert(munmap_called && state.x[0] == 0);
 
     state.x[16] = Arm64Syscall::write;
     state.x[0] = 1;
