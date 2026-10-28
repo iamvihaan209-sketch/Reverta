@@ -30,7 +30,7 @@ enum class Arm64Op {
     // Floating point
     FADD, FSUB, FMUL, FDIV,
     FCMP, FCMPE,
-    FMOV, FMOV_IMM,
+    FMOV, FMOV_IMM, FMOV_TO_GPR, FMOV_FROM_GPR,
     // Load/Store
     LDR_REG, LDR_IMM,
     STR_REG, STR_IMM,
