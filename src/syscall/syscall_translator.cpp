@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <limits>
 
 // Issue a raw macOS syscall using the x86-64 ABI
 // On macOS, user-space syscalls use syscall instruction with RAX = 0x2000000 | num
@@ -48,6 +49,20 @@ bool SyscallTranslator::handle(CpuState& state) {
     }
 }
 
+bool SyscallTranslator::copy_guest_string(uint64_t address, std::string& out,
+                                            size_t max_length) const {
+    out.clear();
+    if (!guest_to_host_ || address == 0) return false;
+    for (size_t i = 0; i < max_length; ++i) {
+        if (address > UINT64_MAX - i) return false;
+        uint8_t* byte = guest_to_host_(address + i, 1);
+        if (!byte) return false;
+        if (*byte == 0) return true;
+        out.push_back(static_cast<char>(*byte));
+    }
+    return false;
+}
+
 // ── Syscall implementations ───────────────────────────────────────────────────
 
 bool SyscallTranslator::sys_exit(CpuState& state) {
@@ -59,8 +74,15 @@ bool SyscallTranslator::sys_exit(CpuState& state) {
 
 bool SyscallTranslator::sys_write(CpuState& state) {
     int     fd    = (int)state.x[0];
-    void*   buf   = reinterpret_cast<void*>(state.x[1]);
-    size_t  count = (size_t)state.x[2];
+    const size_t count = static_cast<size_t>(state.x[2]);
+    void* buf = nullptr;
+    if (count != 0) {
+        buf = guest_to_host_ ? guest_to_host_(state.x[1], count) : nullptr;
+        if (!buf) {
+            state.x[0] = static_cast<uint64_t>(-EFAULT);
+            return true;
+        }
+    }
 
     ssize_t ret = ::write(fd, buf, count);
     if (ret < 0) {
@@ -73,8 +95,15 @@ bool SyscallTranslator::sys_write(CpuState& state) {
 
 bool SyscallTranslator::sys_read(CpuState& state) {
     int    fd    = (int)state.x[0];
-    void*  buf   = reinterpret_cast<void*>(state.x[1]);
-    size_t count = (size_t)state.x[2];
+    const size_t count = static_cast<size_t>(state.x[2]);
+    void* buf = nullptr;
+    if (count != 0) {
+        buf = guest_to_host_ ? guest_to_host_(state.x[1], count) : nullptr;
+        if (!buf) {
+            state.x[0] = static_cast<uint64_t>(-EFAULT);
+            return true;
+        }
+    }
 
     ssize_t ret = ::read(fd, buf, count);
     if (ret < 0) {
@@ -86,11 +115,15 @@ bool SyscallTranslator::sys_read(CpuState& state) {
 }
 
 bool SyscallTranslator::sys_open(CpuState& state) {
-    const char* path  = reinterpret_cast<const char*>(state.x[0]);
-    int         flags = (int)state.x[1];
-    int         mode  = (int)state.x[2];
+    std::string path;
+    if (!copy_guest_string(state.x[0], path)) {
+        state.x[0] = static_cast<uint64_t>(-EFAULT);
+        return true;
+    }
+    const int flags = static_cast<int>(state.x[1]);
+    const int mode = static_cast<int>(state.x[2]);
 
-    int fd = ::open(path, flags, mode);
+    int fd = ::open(path.c_str(), flags, mode);
     if (fd < 0) {
         state.x[0] = static_cast<uint64_t>(-errno);
     } else {
