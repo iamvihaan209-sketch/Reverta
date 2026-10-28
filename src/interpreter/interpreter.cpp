@@ -151,7 +151,7 @@ void Interpreter::execute(const Arm64Insn& insn) {
 
     // Scalar floating-point operations use the SIMD/FP register bank.
     case Arm64Op::FADD: case Arm64Op::FSUB:
-    case Arm64Op::FMUL: case Arm64Op::FDIV: case Arm64Op::FABS: case Arm64Op::FNEG:
+    case Arm64Op::FMUL: case Arm64Op::FDIV: case Arm64Op::FABS: case Arm64Op::FNEG: case Arm64Op::FCVT_SD: case Arm64Op::FCVT_DS:
     case Arm64Op::FCMP: case Arm64Op::FCMPE: case Arm64Op::FMOV: case Arm64Op::FMOV_IMM:
     case Arm64Op::FMOV_TO_GPR: case Arm64Op::FMOV_FROM_GPR:
         execute_fp(insn);
@@ -280,6 +280,25 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
 
 // ── Scalar floating-point execution ──────────────────────────────────────────
 void Interpreter::execute_fp(const Arm64Insn& insn) {
+    if (insn.op == Arm64Op::FCVT_SD) {
+        double source = 0.0;
+        std::memcpy(&source, &state_.q[insn.rn][0], sizeof(source));
+        const float result = static_cast<float>(source);
+        uint32_t result_bits = 0;
+        std::memcpy(&result_bits, &result, sizeof(result));
+        state_.q[insn.rd][0] = result_bits;
+        state_.q[insn.rd][1] = 0;
+        return;
+    }
+    if (insn.op == Arm64Op::FCVT_DS) {
+        const uint32_t source_bits = static_cast<uint32_t>(state_.q[insn.rn][0]);
+        float source = 0.0f;
+        std::memcpy(&source, &source_bits, sizeof(source));
+        const double result = static_cast<double>(source);
+        std::memcpy(&state_.q[insn.rd][0], &result, sizeof(result));
+        state_.q[insn.rd][1] = 0;
+        return;
+    }
     if (insn.op == Arm64Op::FMOV_TO_GPR) {
         state_.x[insn.rd] = insn.is64 ? state_.q[insn.rn][0]
                                       : static_cast<uint32_t>(state_.q[insn.rn][0]);
