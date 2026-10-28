@@ -1,6 +1,5 @@
 #include "loader/macho_loader.h"
 #include <mach-o/loader.h>
-#include <mach/arm/thread_status.h>
 #include <mach-o/fat.h>
 #include <libkern/OSByteOrder.h>
 #include <mach/vm_prot.h>
@@ -203,10 +202,12 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
                 error_msg_ = "Truncated LC_UNIXTHREAD header";
                 return false;
             }
+            constexpr uint32_t kArmThreadState64Flavor = 6;
+            constexpr uint32_t kArmThreadState64Count = 68;
             uint32_t flavor = 0, count = 0;
             std::memcpy(&flavor, cursor + 8, sizeof(flavor));
             std::memcpy(&count, cursor + 12, sizeof(count));
-            if (flavor != ARM_THREAD_STATE64 || count < ARM_THREAD_STATE64_COUNT ||
+            if (flavor != kArmThreadState64Flavor || count < kArmThreadState64Count ||
                 count > (lc->cmdsize - 16) / sizeof(uint32_t) ||
                 static_cast<size_t>(count) * sizeof(uint32_t) < 33 * sizeof(uint64_t)) {
                 error_msg_ = "Invalid or truncated ARM64 LC_UNIXTHREAD state";
