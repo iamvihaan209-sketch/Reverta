@@ -390,7 +390,7 @@ void Interpreter::execute_fp(const Arm64Insn& insn) {
     const uint32_t b_bits = static_cast<uint32_t>(state_.q[insn.rm][0]);
     std::memcpy(&a, &a_bits, sizeof(a));
     std::memcpy(&b, &b_bits, sizeof(b));
-    if (insn.op == Arm64Op::FCMP) {
+    if (insn.op == Arm64Op::FCMP || insn.op == Arm64Op::FCMPE) {
         if (std::isnan(a) || std::isnan(b)) {
             state_.n = false; state_.z = false; state_.c = true; state_.v = true;
         } else {
