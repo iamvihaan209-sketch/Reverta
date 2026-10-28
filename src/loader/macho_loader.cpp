@@ -111,6 +111,10 @@ std::optional<LoadedBinary> MachOLoader::load(const std::string& path) {
     binary.image_data.assign(macho_data, macho_data + macho_size);
     if (!parse_load_commands(binary.image_data.data(), binary.image_data.size(), binary) ||
         !map_segments(binary.image_data.data(), binary.image_data.size(), binary)) {
+        for (const auto& seg : binary.segments) {
+            if (seg.mapped && seg.vmsize)
+                ::munmap(seg.mapped, static_cast<size_t>(seg.vmsize));
+        }
         ::munmap(data, file_size);
         return std::nullopt;
     }
