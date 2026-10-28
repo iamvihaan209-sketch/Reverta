@@ -1,0 +1,84 @@
+# ChatGPT changes and handoff notes for Claude
+
+This file is a handoff log for Claude. Keep it updated as work continues. It records verified changes and the plan to reach Reverta 1.0; it is not a claim that the whole roadmap is complete.
+
+## Project constraints
+
+- Project: Reverta — run ARM64 Mach-O binaries on x86-64 Intel Macs.
+- Minimum host: macOS 12 Monterey; preserve the CMake deployment target of 12.0.
+- Keep Claude's existing architecture and implementation; prefer incremental fixes over a rewrite.
+- Do not mark a milestone complete from a successful compile alone. Run tests and, where possible, execute real ARM64 Mach-O fixtures.
+- Existing CI is GitHub Actions workflow `.github/workflows/macos.yml`; latest confirmed run at handoff: run #20, success, commit `611a644d004d287a32c0d897a6256cc128d1a78e`.
+
+## Claude's documented version roadmap
+
+From README.md:
+- v0.3 — JIT: translate ARM64 basic blocks to native x86-64; block cache.
+- v0.5.0-beta — stabilized JIT (shifts, CSEL, multiply variants) and extended NEON (compare, saturating ops).
+- v0.6 — full dynamic linker: load and translate ARM64 dylibs on demand.
+- v0.7 — floating-point ops (FADD, FCMP, FMOV).
+- v1.0 — real apps running end-to-end.
+
+The remembered phase ordering from the planning conversation is Phase 1, then Phase 5, then Phases 2, 3, and 4. Phase descriptions:
+1. Core emulator: ARM64 Mach-O loader, AArch64 decoder/interpreter, syscall translation.
+5. Runtime bridges: Objective-C, Swift, Foundation/CoreFoundation, AppKit and dylib interception.
+2. JIT: ARM64 to x86-64 translation.
+3. Dynamic linker: dylibs, symbol resolution, relocations/imports.
+4. NEON/SIMD to SSE/AVX.
+
+README currently labels phases 1, 2, 4 and 5 as implemented, but these labels should be treated as coarse project status, not proof of full architectural coverage.
+
+## Verified ChatGPT changes so far
+
+### Commit `611a644d004d287a32c0d897a6256cc128d1a78e`
+- Fixed unsigned saturating 32-bit vector addition/subtraction in `src/simd/neon_simd.cpp`. SSE2 does not provide `_mm_adds_epi32` / `_mm_subs_epi32`; those names prevented the Intel build from compiling. Lane-wise scalar fallbacks now implement correct unsigned saturation.
+- Hardened parts of `src/dylink/dyld_linker.cpp`: reject empty symbol names, validate the Mach-O 64-bit header and load-command region, check classic bind-data and chained-fixup payload ranges, and propagate parser failure from `apply_fixups`.
+- GitHub Actions run #20 for this commit completed with conclusion `success`: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40765528744
+- PR #1 is a draft focused on this first hardening pass: https://github.com/iamvihaan209-sketch/Reverta/pull/1
+
+### Important known gaps at handoff (not fixed just because CI passed)
+- The dyld bind opcode parser still performs unbounded ULEB/SLEB reads and unbounded symbol-string reads. Malformed input can overrun buffers.
+- Chained-fixup parsing trusts header offsets/counts, import table bounds, starts-in-image/segment-start bounds, page offsets and chain links. It assumes a narrow pointer/import format and does not fully support multi-start pages.
+- `apply_fixups` currently combines the results of the classic and chained parsers. Make sure an absent fixup command is a successful no-op, while malformed metadata fails.
+- `DyldLinker::link` only registers empty stubs for system dylibs; non-system/bundled dylibs are TODO.
+- `main.cpp` does not call the linker and has a TODO for patching imports.
+- `MachOLoader` unmaps the original file before returning and does not preserve the raw Mach-O image for the linker. Load-command and segment bounds validation is incomplete; fat-architecture offsets/sizes need validation.
+- Decoder/interpreter/JIT coverage is incomplete. Current tests only cover a small JIT smoke test.
+- Syscall translation is partial and has known ABI/semantic limitations. Do not claim broad app compatibility until these are addressed and tested.
+- No local build was run by ChatGPT. CI is the source of truth for build status.
+
+## Work plan to v1.0
+
+### First: finish v0.6 / Phase 3 (highest priority)
+1. Add bounded ULEB128/SLEB128 and bounded C-string readers; reject malformed/truncated bind opcodes without reading out of bounds.
+2. Validate every chained-fixup offset/count/size before dereferencing; support only explicitly implemented formats and fail clearly for unsupported ones rather than silently corrupting memory.
+3. Treat absent fixup commands as no-op success.
+4. Preserve the selected ARM64 Mach-O slice bytes and image size in `LoadedBinary`, or introduce an equivalent safe linker input abstraction.
+5. Integrate `DyldLinker::link` and `apply_fixups` into startup with a guest-address-to-host mapping callback that uses the actual per-segment mappings.
+6. Load bundled dylibs recursively with cycle/duplicate detection, correct dependency/install-name matching, exports, symbol lookup and relocation handling. For system libraries, use explicit supported interceptors/stubs; unresolved symbols should fail clearly rather than silently bind to zero.
+7. Add minimal synthetic Mach-O tests for malformed headers/commands, truncated ULEB/SLEB, absent fixups, classic binds, chained fixups, unresolved imports, and address mapping.
+8. Only call v0.6 done after CI passes and at least a small ARM64 test executable can resolve an imported symbol and run.
+
+### Next: v0.7 / Phase 4
+1. Add explicit FP register state and implement FADD, FCMP and FMOV with correct 32-bit/64-bit semantics and NZCV behavior.
+2. Decode each instruction precisely; unsupported encodings must remain UNKNOWN, not be mis-decoded as a supported instruction.
+3. Add decoder/interpreter tests using known AArch64 instruction encodings and edge cases.
+4. Expand NEON/SIMD in small instruction families with scalar reference tests and Intel-host optimized paths only where supported.
+
+### Then: v1.0 end-to-end stability
+1. Make loader robust: validate file size, header, command count/region, every command size, segment file ranges and fat-slice ranges; reject unsupported Mach-O variants safely.
+2. Correct entry-point/thread-state parsing and per-segment slide/mapping consistency; clean up mappings on failure and process exit.
+3. Audit interpreter memory accesses, register width semantics, flags, addressing modes and branch behavior; avoid host pointer fallbacks for unmapped guest addresses.
+4. Expand syscall coverage with guest-to-host ABI translation, errno semantics, path handling and safe guest memory validation.
+5. Audit ObjC/Swift/Foundation/AppKit bridges: document implemented subset, check argument/return conventions and fail explicitly for unsupported calls.
+6. Expand tests: loader fixtures, decoder table, interpreter instruction tests, syscall tests, linker tests, SIMD reference tests and integration smoke tests.
+7. Add end-to-end fixtures: a minimal ARM64 static executable, one using a supported imported function, and a small Foundation/ObjC program only when the relevant bridges are truly implemented.
+8. Update README status table, limitations, supported instruction/API matrix, build instructions and release notes based on tested behavior. Keep the deployment target at macOS 12.0.
+
+## Collaboration rules for Claude
+
+- Read this file and inspect the current branch/PR before editing; do not assume this note reflects later commits once work continues.
+- Preserve working changes and commit in small, reviewable increments.
+- For each commit, state which behavior changed and which tests validate it.
+- If a feature is incomplete, document the unsupported subset and leave the checklist unchecked.
+- Avoid claiming “full dynamic linker”, “real apps”, or “v1.0 ready” from compilation alone.
