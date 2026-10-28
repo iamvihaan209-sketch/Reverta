@@ -62,6 +62,35 @@ static std::vector<uint8_t> make_macho(const std::vector<uint8_t>& binds,
     return image;
 }
 
+static std::vector<uint8_t> make_export_macho() {
+    const std::vector<uint8_t> trie = {
+        0x00, 0x01, '_','f','o','o',0x00, 0x08, // root with one "_foo" child at offset 8
+        0x02, 0x00, 0x20, 0x00               // terminal: flags=regular, address=0x20, no children
+    };
+    const size_t commands_size = sizeof(segment_command_64) + sizeof(linkedit_data_command);
+    const size_t payload_off = sizeof(mach_header_64) + commands_size;
+    std::vector<uint8_t> image(payload_off + trie.size(), 0);
+    auto* mh = reinterpret_cast<mach_header_64*>(image.data());
+    mh->magic = MH_MAGIC_64;
+    mh->cputype = CPU_TYPE_ARM64;
+    mh->ncmds = 2;
+    mh->sizeofcmds = static_cast<uint32_t>(commands_size);
+    auto* seg = reinterpret_cast<segment_command_64*>(image.data() + sizeof(mach_header_64));
+    seg->cmd = LC_SEGMENT_64;
+    seg->cmdsize = sizeof(segment_command_64);
+    std::memcpy(seg->segname, "__TEXT", 6);
+    seg->vmaddr = 0x100000000ULL;
+    seg->vmsize = 0x1000;
+    auto* ex = reinterpret_cast<linkedit_data_command*>(
+        image.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
+    ex->cmd = LC_DYLD_EXPORTS_TRIE;
+    ex->cmdsize = sizeof(linkedit_data_command);
+    ex->dataoff = static_cast<uint32_t>(payload_off);
+    ex->datasize = static_cast<uint32_t>(trie.size());
+    std::memcpy(image.data() + payload_off, trie.data(), trie.size());
+    return image;
+}
+
 static std::vector<uint8_t> make_chained_macho(bool with_import = false) {
     const size_t commands_size = sizeof(segment_command_64) + sizeof(linkedit_data_command);
     const size_t payload_off = sizeof(mach_header_64) + commands_size;
@@ -118,6 +147,16 @@ static std::vector<uint8_t> make_chained_macho(bool with_import = false) {
 int main() {
     auto& interceptor = DylibInterceptor::instance();
     interceptor.register_symbol("_test_import", [](uint64_t*, int) -> uint64_t { return 0; });
+
+    // Export-trie parsing resolves a regular export relative to slid __TEXT.
+    auto export_image = make_export_macho();
+    assert(linker.link(export_image.data(), export_image.size(), 0x1000, {}));
+    assert(linker.resolve_symbol("_foo") == 0x100001020ULL);
+    auto malformed_export = export_image;
+    auto* bad_export = reinterpret_cast<linkedit_data_command*>(
+        malformed_export.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
+    bad_export->dataoff = UINT32_MAX;
+    assert(!linker.link(malformed_export.data(), malformed_export.size(), 0x1000, {}));
 
     // SET_SYMBOL("_test_import"), SET_SEGMENT_AND_OFFSET(0, 8), DO_BIND, DONE.
     const std::vector<uint8_t> binds = {
