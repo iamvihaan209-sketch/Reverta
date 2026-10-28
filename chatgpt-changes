@@ -174,3 +174,9 @@ Changes committed after the initial handoff:
 - Dependency path resolution carries inherited runpaths through nested dependencies, validates load-command string offsets, and preserves the first loaded definition for duplicate export names.
 - Latest CI run #95 at commit `ece4aa6e` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40773367505
 - This is synthetic-fixture coverage only; real framework loading and application startup remain unverified.
+
+
+### v0.7 scalar conversion coverage
+- Added scalar `FCVT S,D` and `FCVT D,S` decode/execute paths, with conversion smoke tests that round-trip a value through the single-precision register form.
+- Latest CI run #102 at commit `bd703f62` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40773642241
+- The scalar FP subset remains incomplete: FP memory loads/stores, integer/FP conversion forms, rounding-mode and exception fidelity, and vector/SIMD operations remain outstanding.
