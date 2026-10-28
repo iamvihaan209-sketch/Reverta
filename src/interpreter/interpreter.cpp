@@ -300,7 +300,7 @@ void Interpreter::execute_fp(const Arm64Insn& insn) {
         const unsigned exponent_bits = insn.is64 ? 11 : 8;
         const unsigned fraction_bits = insn.is64 ? 52 : 23;
         uint64_t exponent = ((b ^ 1U) << (exponent_bits - 1)) | cd;
-        for (unsigned bit = 2; bit < exponent_bits; ++bit)
+        for (unsigned bit = 2; bit < exponent_bits - 1; ++bit)
             exponent |= b << bit;
         const uint64_t expanded = (sign << (exponent_bits + fraction_bits)) |
             (exponent << fraction_bits) |
