@@ -36,6 +36,8 @@ enum class RunResult {
     ERROR
 };
 
+enum class GuestAccess { Read, Write, Execute };
+
 // Syscall handler: receives cpu state, returns false to stop execution
 using SyscallHandler = std::function<bool(CpuState&)>;
 
@@ -56,7 +58,8 @@ public:
     const CpuState& state() const { return state_; }
 
     // Translate guest virtual address to host pointer (nullptr if unmapped)
-    uint8_t* guest_to_host(uint64_t vaddr, size_t access_size = 1) const;
+    uint8_t* guest_to_host(uint64_t vaddr, size_t access_size = 1,
+                           GuestAccess access = GuestAccess::Read) const;
     int64_t mmap_guest(uint64_t requested_address, size_t length, int prot,
                        int flags, int fd, int64_t offset);
     int64_t munmap_guest(uint64_t address, size_t length);
