@@ -279,6 +279,25 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
 
 // ── Scalar floating-point execution ──────────────────────────────────────────
 void Interpreter::execute_fp(const Arm64Insn& insn) {
+    if (insn.op == Arm64Op::FMOV_IMM) {
+        const uint8_t imm8 = static_cast<uint8_t>(insn.imm);
+        const uint64_t sign = (imm8 >> 7) & 1;
+        const uint64_t b = (imm8 >> 6) & 1;
+        const uint64_t cd = (imm8 >> 4) & 3;
+        const uint64_t frac = imm8 & 0x0f;
+        const unsigned exponent_bits = insn.is64 ? 11 : 8;
+        const unsigned fraction_bits = insn.is64 ? 52 : 23;
+        uint64_t exponent = ((b ^ 1U) << (exponent_bits - 1)) | cd;
+        for (unsigned bit = 2; bit < exponent_bits; ++bit)
+            exponent |= b << bit;
+        const uint64_t expanded = (sign << (exponent_bits + fraction_bits)) |
+            (exponent << fraction_bits) |
+            (frac << (fraction_bits - 4));
+        state_.q[insn.rd][0] = insn.is64 ? expanded : static_cast<uint32_t>(expanded);
+        state_.q[insn.rd][1] = 0;
+        return;
+    }
+
     if (insn.op == Arm64Op::FMOV) {
         if (insn.is64) {
             state_.q[insn.rd][0] = state_.q[insn.rn][0];
