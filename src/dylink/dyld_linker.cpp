@@ -633,14 +633,14 @@ bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide)
             uint64_t flags = 0, address = 0;
             if (!read_uleb128(p, terminal_end, flags) ||
                 (flags & 0x08) != 0 || (flags & 0x10) != 0 || (flags & ~uint64_t{0x1f}) != 0 ||
-                !read_uleb128(p, terminal_end, address)) {
+                !read_uleb128(p, terminal_end, address) || p != terminal_end) {
                 active.erase(offset);
                 std::fprintf(stderr, "[dyld] unsupported or malformed export terminal for %s\n",
                              prefix.c_str());
                 return false;
             }
             const uint64_t kind = flags & 0x03;
-            if (kind == 1) {
+            if (kind > 2) {\n                active.erase(offset);\n                return false;\n            }\n            if (kind == 1) {
                 active.erase(offset);
                 std::fprintf(stderr, "[dyld] thread-local export is unsupported: %s\n",
                              prefix.c_str());
