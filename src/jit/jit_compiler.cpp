@@ -134,9 +134,10 @@ bool JitCompiler::compile(uint64_t guest_pc, Block& out) {
     for (size_t i = 0; i < kMaxInstructions; ++i, pc += 4) {
         uint8_t* insn_host = nullptr;
         for (const auto& seg : binary_.segments) {
-            if (seg.mapped && pc >= seg.vmaddr &&
-                pc < seg.vmaddr + seg.vmsize) {
-                insn_host = seg.mapped + (pc - seg.vmaddr);
+            const uint64_t guest_base = seg.mapped_vmaddr ? seg.mapped_vmaddr : seg.vmaddr;
+            if (seg.mapped && pc >= guest_base &&
+                pc - guest_base < seg.vmsize) {
+                insn_host = seg.mapped + (pc - guest_base);
                 break;
             }
         }
