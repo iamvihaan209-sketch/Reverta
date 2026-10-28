@@ -145,26 +145,23 @@ bool SyscallTranslator::sys_getpid(CpuState& state) {
 }
 
 bool SyscallTranslator::sys_mmap(CpuState& state) {
-    void*  addr  = reinterpret_cast<void*>(state.x[0]);
-    size_t len   = (size_t)state.x[1];
-    int    prot  = (int)state.x[2];
-    int    flags = (int)state.x[3];
-    int    fd    = (int)state.x[4];
-    off_t  off   = (off_t)state.x[5];
-
-    void* ret = ::mmap(addr, len, prot, flags, fd, off);
-    if (ret == MAP_FAILED) {
-        state.x[0] = static_cast<uint64_t>(-errno);
-    } else {
-        state.x[0] = reinterpret_cast<uint64_t>(ret);
+    if (!guest_mmap_) {
+        state.x[0] = static_cast<uint64_t>(-ENOSYS);
+        return true;
     }
+    const int64_t result = guest_mmap_(state.x[0], static_cast<size_t>(state.x[1]),
+        static_cast<int>(state.x[2]), static_cast<int>(state.x[3]),
+        static_cast<int>(state.x[4]), static_cast<int64_t>(state.x[5]));
+    state.x[0] = static_cast<uint64_t>(result);
     return true;
 }
 
 bool SyscallTranslator::sys_munmap(CpuState& state) {
-    void*  addr = reinterpret_cast<void*>(state.x[0]);
-    size_t len  = (size_t)state.x[1];
-    int ret = ::munmap(addr, len);
-    state.x[0] = ret < 0 ? static_cast<uint64_t>(-errno) : 0;
+    if (!guest_munmap_) {
+        state.x[0] = static_cast<uint64_t>(-ENOSYS);
+        return true;
+    }
+    const int64_t result = guest_munmap_(state.x[0], static_cast<size_t>(state.x[1]));
+    state.x[0] = static_cast<uint64_t>(result);
     return true;
 }
