@@ -36,7 +36,9 @@ int main() {
     put32(code + 12, 0x1E6628A4); // fadd d4, d5, d6
     put32(code + 16, 0x1E652080); // fcmp d4, d5
     put32(code + 20, 0x1E604087); // fmov d7, d4
-    put32(code + 24, 0x1E2E1008); // fmov s8, #1.0\n    put32(code + 28, 0x1E701009); // fmov d9, #-2.0\n    put32(code + 32, 0x1E26000A); // fmov w10, s0
+    put32(code + 24, 0x1E2E1008); // fmov s8, #1.0
+    put32(code + 28, 0x1E701009); // fmov d9, #-2.0
+    put32(code + 32, 0x1E26000A); // fmov w10, s0
     put32(code + 36, 0x9E66008D); // fmov x13, d4
     put32(code + 40, 0x0B020020); // add w0, w1, w2
 
@@ -71,6 +73,10 @@ int main() {
     assert(!state.n && !state.z && state.c && !state.v);
     assert(interpreter.step());
     assert(as_double(state.q[7][0]) == 3.75);
+    assert(interpreter.step());
+    assert(as_float(state.q[8][0]) == 1.0f);
+    assert(interpreter.step());
+    assert(as_double(state.q[9][0]) == -2.0);
     assert(interpreter.step());
     assert(state.x[10] == fbits(3.75f));
     assert(interpreter.step());
