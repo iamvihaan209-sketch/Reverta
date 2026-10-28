@@ -82,3 +82,33 @@ README currently labels phases 1, 2, 4 and 5 as implemented, but these labels sh
 - For each commit, state which behavior changed and which tests validate it.
 - If a feature is incomplete, document the unsupported subset and leave the checklist unchecked.
 - Avoid claiming “full dynamic linker”, “real apps”, or “v1.0 ready” from compilation alone.
+
+
+## Current continuation branch: `work/v0.6-to-v1-roadmap`
+
+Changes committed after the initial handoff:
+- Added `LoadedBinary::image_data` to retain the selected thin Mach-O slice for linker use.
+- Hardened loader validation for file/header size, universal-binary ARM64 slice ranges, load-command region/sizes, segment file ranges and sizes, dylib command names, and entry-point/thread command sizes.
+- Added `Segment::mapped_vmaddr` so guest addresses after slide are distinct from host pointers. Updated interpreter and JIT address translation to use it.
+- Removed `MAP_FIXED` segment mapping. Guest addresses are now translated to separately allocated host mappings; this avoids clobbering the emulator's own host address space.
+- Deferred final segment protections until after relocations and exposed `MachOLoader::finalize_protections`.
+- Added `tests/loader_smoke.cpp` and CTest target `reverta_loader_smoke` for malformed input; added a non-zero-slide regression case to `tests/jit_smoke.cpp`.
+- Bounded classic dyld bind opcode reads with checked ULEB128/SLEB128 decoding, terminated symbol checks, overflow guards, and explicit failure for unsupported bind opcodes.
+- Integrated `DyldLinker::link` and `apply_fixups` into `main.cpp` before final segment protections. Removed the old no-op import TODO.
+- Bundled dylib dependencies now fail clearly instead of being logged as TODO while reporting success.
+- Chained-fixup parsing now validates command/payload ranges and fails explicitly for present chained-fixup commands rather than running the old unsafe/incomplete walker. This is an intentional temporary limitation, not support for chained fixups.
+- README now labels Phase 3/v0.6 as partial rather than complete.
+
+### CI observations for this continuation
+- Run #27 (commit `8c534a98`) completed successfully with both build and tests passing, including the new malformed-loader test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40766639972
+- Run #28 (commit `95f01103`, dynamic-linker startup integration) completed successfully with build and tests passing: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40766875221
+- Later commits add safe non-fixed segment mapping and a slid-address JIT regression test. Check the newest Actions run before claiming those newest changes pass.
+- Current status is **not v0.6 complete**: chained fixups are rejected; bundled dylib loading/export resolution is not implemented; classic bind opcodes have not yet been validated against a real dynamically linked ARM64 executable. No end-to-end app has been run.
+
+### Next concrete tasks
+1. Check CI for the latest branch head and fix any failures before adding more code.
+2. Add synthetic classic-bind tests and tests for truncated ULEB/SLEB and unsupported opcodes.
+3. Implement bounded chained fixup support for explicitly selected pointer/import formats; keep unknown formats as hard failures.
+4. Integrate the fixup path against a minimal ARM64 Mach-O fixture and verify trampoline resolution.
+5. Implement bundled dylib mapping and export lookup, including dependency cycles and duplicate install names.
+6. Then proceed with v0.7 FP decode/execute/test coverage and continue the v1.0 integration checklist above.
