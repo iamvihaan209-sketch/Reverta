@@ -400,25 +400,20 @@ void vcmp_gt_f32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
 // ── arithmetic saturation (addition/subtraction clamping) ─────────────────────
 
 void vqadd_u32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
-#ifdef USE_SSE2
-    store128(dst, _mm_adds_epi32(load128(a), load128(b)));
-#else
+    // SSE2 has no unsigned saturating 32-bit add instruction. Keep the
+    // lane-wise fallback for both SSE2 and scalar builds.
     uint32_t *d=(uint32_t*)dst,*x=(uint32_t*)a,*y=(uint32_t*)b;
     for(int i=0;i<4;i++) {
         uint64_t sum = (uint64_t)x[i] + y[i];
         d[i] = (sum > 0xFFFFFFFFU) ? 0xFFFFFFFFU : (uint32_t)sum;
     }
-#endif
 }
 void vqsub_u32(uint64_t* dst, const uint64_t* a, const uint64_t* b) {
-#ifdef USE_SSE2
-    store128(dst, _mm_subs_epi32(load128(a), load128(b)));
-#else
+    // Unsigned saturating subtraction clamps underflow to zero.
     uint32_t *d=(uint32_t*)dst,*x=(uint32_t*)a,*y=(uint32_t*)b;
     for(int i=0;i<4;i++) {
         d[i] = (x[i] < y[i]) ? 0 : (x[i] - y[i]);
     }
-#endif
 }
 
 } // namespace NeonSimd
