@@ -14,7 +14,7 @@
 MachOLoader::MachOLoader() = default;
 MachOLoader::~MachOLoader() = default;
 
-std::optional<LoadedBinary> MachOLoader::load(const std::string& path) {
+std::optional<LoadedBinary> MachOLoader::load(const std::string& path, uint64_t slide_override) {
     error_msg_.clear();
     int fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) {
@@ -108,9 +108,11 @@ std::optional<LoadedBinary> MachOLoader::load(const std::string& path) {
 
     LoadedBinary binary{};
     binary.is_pie = (mh->flags & MH_PIE) != 0;
+    binary.filetype = mh->filetype;
+    binary.path = path;
     binary.image_data.assign(macho_data, macho_data + macho_size);
     if (!parse_load_commands(binary.image_data.data(), binary.image_data.size(), binary) ||
-        !map_segments(binary.image_data.data(), binary.image_data.size(), binary)) {
+        !map_segments(binary.image_data.data(), binary.image_data.size(), binary, slide_override)) {
         for (const auto& seg : binary.segments) {
             if (seg.mapped && seg.vmsize)
                 ::munmap(seg.mapped, static_cast<size_t>(seg.vmsize));
@@ -199,10 +201,31 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
             found_entry = true;
             break;
         }
+        case LC_RPATH: {
+            if (lc->cmdsize < sizeof(rpath_command)) {
+                error_msg_ = "Truncated LC_RPATH";
+                return false;
+            }
+            const auto* rp = reinterpret_cast<const rpath_command*>(cursor);
+            if (rp->path.offset >= lc->cmdsize) {
+                error_msg_ = "Rpath string offset is out of bounds";
+                return false;
+            }
+            const char* name = reinterpret_cast<const char*>(cursor + rp->path.offset);
+            const size_t remaining = lc->cmdsize - rp->path.offset;
+            const void* terminator = std::memchr(name, '\\0', remaining);
+            if (!terminator) {
+                error_msg_ = "Unterminated rpath string";
+                return false;
+            }
+            binary.rpaths.emplace_back(name, static_cast<const char*>(terminator) - name);
+            break;
+        }
         case LC_LOAD_DYLIB:
         case LC_LOAD_WEAK_DYLIB:
         case LC_REEXPORT_DYLIB:
-        case LC_LOAD_UPWARD_DYLIB: {
+        case LC_LOAD_UPWARD_DYLIB:
+        case LC_LAZY_LOAD_DYLIB: {
             if (lc->cmdsize < sizeof(dylib_command)) {
                 error_msg_ = "Truncated dylib load command";
                 return false;
@@ -232,8 +255,8 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
         error_msg_ = "Load-command sizes do not match sizeofcmds";
         return false;
     }
-    if (!found_entry) {
-        error_msg_ = "No entry point found in binary";
+    if (!found_entry && binary.filetype != MH_DYLIB) {
+        error_msg_ = "No entry point found in executable";
         return false;
     }
     if (binary.segments.empty()) {
@@ -243,8 +266,8 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
     return true;
 }
 
-bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& binary) {
-    uint64_t slide = binary.is_pie ? 0x100000000ULL : 0;
+bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& binary, uint64_t slide_override) {
+    uint64_t slide = slide_override ? slide_override : (binary.is_pie ? 0x100000000ULL : 0);
     binary.base_address = slide;
 
     for (auto& seg : binary.segments) {
@@ -280,12 +303,14 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
     bool text_found = false;
     for (const auto& seg : binary.segments) {
         if (seg.name == "__TEXT") {
-            if (seg.vmaddr > std::numeric_limits<uint64_t>::max() - slide ||
-                binary.entry_point > std::numeric_limits<uint64_t>::max() - (seg.vmaddr + slide)) {
-                error_msg_ = "Entry-point address overflows";
-                return false;
+            if (binary.filetype != MH_DYLIB) {
+                if (seg.vmaddr > std::numeric_limits<uint64_t>::max() - slide ||
+                    binary.entry_point > std::numeric_limits<uint64_t>::max() - (seg.vmaddr + slide)) {
+                    error_msg_ = "Entry-point address overflows";
+                    return false;
+                }
+                binary.entry_point = seg.vmaddr + slide + binary.entry_point;
             }
-            binary.entry_point = seg.vmaddr + slide + binary.entry_point;
             text_found = true;
             break;
         }
@@ -295,14 +320,16 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
         return false;
     }
 
-    void* stack = ::mmap(nullptr, STACK_SIZE, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (stack == MAP_FAILED) {
-        error_msg_ = "Failed to allocate stack";
-        return false;
+    if (binary.filetype != MH_DYLIB) {
+        void* stack = ::mmap(nullptr, STACK_SIZE, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (stack == MAP_FAILED) {
+            error_msg_ = "Failed to allocate stack";
+            return false;
+        }
+        binary.stack_top = reinterpret_cast<uint64_t>(stack) + STACK_SIZE;
+        binary.stack_top &= ~0xFULL;
     }
-    binary.stack_top = reinterpret_cast<uint64_t>(stack) + STACK_SIZE;
-    binary.stack_top &= ~0xFULL;
     return true;
 }
 
