@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <unordered_set>
 
 namespace {
 bool read_uleb128(const uint8_t*& p, const uint8_t* end, uint64_t& value) {
@@ -562,9 +563,135 @@ bool DyldLinker::apply_fixups(const uint8_t* data, size_t size,
     return classic_ok && chained_ok;
 }
 
-bool DyldLinker::link(const uint8_t* /*data*/, size_t /*size*/,
-                       uint64_t /*slide*/,
+bool DyldLinker::parse_exports(const uint8_t* data, size_t size, uint64_t slide) {
+    if (!data || size < sizeof(mach_header_64)) return false;
+    const auto* mh = reinterpret_cast<const mach_header_64*>(data);
+    if (mh->magic != MH_MAGIC_64 ||
+        mh->sizeofcmds > size - sizeof(mach_header_64)) return false;
+
+    uint32_t export_off = 0, export_size = 0;
+    bool found_exports = false;
+    uint64_t image_base = 0;
+    const uint8_t* cursor = data + sizeof(mach_header_64);
+    const uint8_t* command_end = cursor + mh->sizeofcmds;
+    for (uint32_t i = 0; i < mh->ncmds; ++i) {
+        if (static_cast<size_t>(command_end - cursor) < sizeof(load_command)) return false;
+        const auto* cmd = reinterpret_cast<const load_command*>(cursor);
+        if (cmd->cmdsize < sizeof(load_command) ||
+            cmd->cmdsize > static_cast<size_t>(command_end - cursor)) return false;
+        if (cmd->cmd == LC_SEGMENT_64) {
+            if (cmd->cmdsize < sizeof(segment_command_64)) return false;
+            const auto* seg = reinterpret_cast<const segment_command_64*>(cursor);
+            if (std::strncmp(seg->segname, "__TEXT", sizeof(seg->segname)) == 0) {
+                if (seg->vmaddr > UINT64_MAX - slide) return false;
+                image_base = seg->vmaddr + slide;
+            }
+        } else if (cmd->cmd == LC_DYLD_EXPORTS_TRIE) {
+            if (cmd->cmdsize < sizeof(linkedit_data_command) || found_exports) return false;
+            const auto* ex = reinterpret_cast<const linkedit_data_command*>(cursor);
+            export_off = ex->dataoff;
+            export_size = ex->datasize;
+            found_exports = true;
+        } else if (cmd->cmd == LC_DYLD_INFO || cmd->cmd == LC_DYLD_INFO_ONLY) {
+            if (cmd->cmdsize < sizeof(dyld_info_command)) return false;
+            const auto* di = reinterpret_cast<const dyld_info_command*>(cursor);
+            if (di->export_size) {
+                if (found_exports) return false;
+                export_off = di->export_off;
+                export_size = di->export_size;
+                found_exports = true;
+            }
+        }
+        cursor += cmd->cmdsize;
+    }
+    if (!found_exports || export_size == 0) return true;
+    if (export_off > size || export_size > size - export_off) return false;
+    if (image_base == 0) {
+        std::fprintf(stderr, "[dyld] export trie present without a __TEXT segment\n");
+        return false;
+    }
+
+    const uint8_t* trie = data + export_off;
+    const size_t trie_size = export_size;
+    std::unordered_set<uint64_t> active;
+    size_t nodes_visited = 0;
+    std::function<bool(uint64_t, const std::string&, size_t)> walk;
+    walk = [&](uint64_t offset, const std::string& prefix, size_t depth) -> bool {
+        if (depth > 1024 || offset >= trie_size || ++nodes_visited > 100000 ||
+            !active.insert(offset).second) return false;
+        const uint8_t* p = trie + offset;
+        const uint8_t* end = trie + trie_size;
+        uint64_t terminal_size = 0;
+        if (!read_uleb128(p, end, terminal_size) ||
+            terminal_size > static_cast<uint64_t>(end - p)) {
+            active.erase(offset);
+            return false;
+        }
+        const uint8_t* terminal_end = p + terminal_size;
+        if (terminal_size != 0) {
+            uint64_t flags = 0, address = 0;
+            if (!read_uleb128(p, terminal_end, flags) ||
+                (flags & 0x08) != 0 || (flags & 0x10) != 0 ||
+                !read_uleb128(p, terminal_end, address)) {
+                active.erase(offset);
+                std::fprintf(stderr, "[dyld] unsupported or malformed export terminal for %s\n",
+                             prefix.c_str());
+                return false;
+            }
+            const uint64_t kind = flags & 0x03;
+            if (kind == 1) {
+                active.erase(offset);
+                std::fprintf(stderr, "[dyld] thread-local export is unsupported: %s\n",
+                             prefix.c_str());
+                return false;
+            }
+            uint64_t value = address;
+            if (kind == 0) {
+                if (address > UINT64_MAX - image_base) {
+                    active.erase(offset);
+                    return false;
+                }
+                value = image_base + address;
+            }
+            if (!prefix.empty()) symbol_map_[prefix] = value;
+        }
+        p = terminal_end;
+        if (p >= end) {
+            active.erase(offset);
+            return false;
+        }
+        const uint8_t child_count = *p++;
+        for (uint8_t child = 0; child < child_count; ++child) {
+            const uint8_t* nul = static_cast<const uint8_t*>(
+                std::memchr(p, '\0', static_cast<size_t>(end - p)));
+            if (!nul) {
+                active.erase(offset);
+                return false;
+            }
+            const std::string edge(reinterpret_cast<const char*>(p),
+                                   static_cast<size_t>(nul - p));
+            p = nul + 1;
+            uint64_t child_offset = 0;
+            if (edge.empty() || !read_uleb128(p, end, child_offset) ||
+                child_offset >= trie_size || !walk(child_offset, prefix + edge, depth + 1)) {
+                active.erase(offset);
+                return false;
+            }
+        }
+        active.erase(offset);
+        return true;
+    };
+    if (!walk(0, std::string{}, 0)) {
+        std::fprintf(stderr, "[dyld] failed to parse export trie safely\n");
+        return false;
+    }
+    return true;
+}
+
+bool DyldLinker::link(const uint8_t* data, size_t size,
+                       uint64_t slide,
                        const std::vector<std::string>& required_dylibs) {
+    if (!parse_exports(data, size, slide)) return false;
     for (auto& path : required_dylibs) {
         if (is_system_dylib(path)) {
             LoadedDylib dl{};
