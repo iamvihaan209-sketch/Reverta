@@ -173,6 +173,14 @@ int main() {
     std::memcpy(&chained_bound, guest_memory + 8, sizeof(chained_bound));
     assert(chained_bound == linker.resolve_symbol("_test_import"));
 
+    // Reject a chained-fixup payload that claims to extend beyond the file.
+    auto malformed_chain = chained_image;
+    auto* bad_cf = reinterpret_cast<linkedit_data_command*>(
+        malformed_chain.data() + sizeof(mach_header_64) + sizeof(segment_command_64));
+    bad_cf->datasize = UINT32_MAX;
+    assert(!linker.apply_fixups(malformed_chain.data(), malformed_chain.size(),
+                                0x1000, translate_slid));
+
     // A truncated ULEB in SET_SEGMENT_AND_OFFSET must be rejected, not read past end.
     auto truncated = make_macho({0x70, 0x80});
     assert(!linker.apply_fixups(truncated.data(), truncated.size(), 0, translate));
