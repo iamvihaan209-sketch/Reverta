@@ -383,6 +383,15 @@ int main() {
     std::memcpy(&chained_bound, guest_memory + 8, sizeof(chained_bound));
     assert(chained_bound == linker.resolve_symbol("_test_import"));
 
+    // The signed 8-bit addend encoded in a chained pointer is applied safely.
+    const uint64_t negative_pointer_addend =
+        (uint64_t{1} << 63) | (uint64_t{0xff} << 24);
+    std::memcpy(guest_memory + 8, &negative_pointer_addend, sizeof(negative_pointer_addend));
+    assert(linker.apply_fixups(chained_bind_image.data(), chained_bind_image.size(),
+                               0x1000, translate_slid));
+    std::memcpy(&chained_bound, guest_memory + 8, sizeof(chained_bound));
+    assert(chained_bound == linker.resolve_symbol("_test_import") - 1);
+
     // Reject a chained-fixup payload that claims to extend beyond the file.
     auto malformed_chain = chained_image;
     auto* bad_cf = reinterpret_cast<linkedit_data_command*>(
