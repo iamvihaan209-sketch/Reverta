@@ -40,6 +40,13 @@ int main() {
     lc->cmdsize = 4; // smaller than even load_command
     assert(loader_rejects(malformed));
 
+    std::vector<uint8_t> unsupported_type(sizeof(mach_header_64), 0);
+    auto* unsupported_header = reinterpret_cast<mach_header_64*>(unsupported_type.data());
+    unsupported_header->magic = MH_MAGIC_64;
+    unsupported_header->cputype = CPU_TYPE_ARM64;
+    unsupported_header->filetype = MH_OBJECT;
+    assert(loader_rejects(unsupported_type));
+
     // LC_MAIN.entryoff is a file offset, translated through the containing segment.
     {
         const size_t header_size = sizeof(mach_header_64);
