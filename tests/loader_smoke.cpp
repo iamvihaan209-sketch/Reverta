@@ -125,10 +125,10 @@ int main() {
         auto* thread = reinterpret_cast<load_command*>(
             executable.data() + header_size + sizeof(segment_command_64));
         thread->cmd = LC_UNIXTHREAD;
-        thread->cmdsize = static_cast<uint32_t>(16 + ARM_THREAD_STATE64_COUNT * sizeof(uint32_t));
+        thread->cmdsize = static_cast<uint32_t>(16 + 68 * sizeof(uint32_t));
         auto* thread_fields = reinterpret_cast<uint32_t*>(
             reinterpret_cast<uint8_t*>(thread) + sizeof(load_command));
-        thread_fields[0] = 6; // ARM_THREAD_STATE64
+        thread_fields[0] = 6; // 6
         thread_fields[1] = 68;
         auto* state = reinterpret_cast<uint64_t*>(
             reinterpret_cast<uint8_t*>(thread) + 16);
