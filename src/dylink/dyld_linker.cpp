@@ -3,6 +3,7 @@
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <functional>
 
@@ -164,9 +165,15 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
             if (seg_index >= seg_vmaddrs.size() || sym_name.empty()) return false;
             if (seg_offset > UINT64_MAX - seg_vmaddrs[seg_index]) return false;
             uint8_t* host = g2h(seg_vmaddrs[seg_index] + seg_offset);
-            if (host) patch_got_slot(host, sym_name);
-            else std::fprintf(stderr, "[dyld] bind target is not mapped: %s\n", sym_name.c_str());
-            return host != nullptr;
+            if (!host) {
+                std::fprintf(stderr, "[dyld] bind target is not mapped: %s\n", sym_name.c_str());
+                return false;
+            }
+            const GuestPtr resolved = resolve_symbol(sym_name);
+            if (!resolved) return false;
+            const GuestPtr value = resolved + static_cast<uint64_t>(addend);
+            std::memcpy(host, &value, sizeof(value));
+            return true;
         };
 
         while (p < end) {
@@ -239,34 +246,205 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
 }
 
 bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
-                                       uint64_t /*slide*/,
-                                       const std::function<uint8_t*(uint64_t)>& /*g2h*/) {
-    if (!data || size < sizeof(mach_header_64)) return false;
+                                       uint64_t slide,
+                                       const std::function<uint8_t*(uint64_t)>& g2h) {
+    if (!data || size < sizeof(mach_header_64) || !g2h) return false;
     const auto* mh = reinterpret_cast<const mach_header_64*>(data);
     if (mh->magic != MH_MAGIC_64 ||
         mh->sizeofcmds > size - sizeof(mach_header_64)) return false;
 
     const uint8_t* cursor = data + sizeof(mach_header_64);
-    const uint8_t* end = cursor + mh->sizeofcmds;
+    const uint8_t* command_end = cursor + mh->sizeofcmds;
+    const linkedit_data_command* fixup_cmd = nullptr;
     for (uint32_t i = 0; i < mh->ncmds; ++i) {
-        if (static_cast<size_t>(end - cursor) < sizeof(load_command)) return false;
+        if (static_cast<size_t>(command_end - cursor) < sizeof(load_command)) return false;
         const auto* cmd = reinterpret_cast<const load_command*>(cursor);
         if (cmd->cmdsize < sizeof(load_command) ||
-            cmd->cmdsize > static_cast<size_t>(end - cursor)) return false;
+            cmd->cmdsize > static_cast<size_t>(command_end - cursor)) return false;
         if (cmd->cmd == LC_DYLD_CHAINED_FIXUPS) {
-            if (cmd->cmdsize < sizeof(linkedit_data_command)) return false;
-            const auto* cf = reinterpret_cast<const linkedit_data_command*>(cursor);
-            if (cf->dataoff > size || cf->datasize > size - cf->dataoff) return false;
-            // Do not run the old incomplete chain walker: its assumptions about
-            // import formats, starts-in-segment layout and chain bounds are unsafe.
-            // Implemented chained-pointer formats will be enabled here explicitly.
-            std::fprintf(stderr,
-                "[dyld] chained fixups are present but this pointer format is not yet supported safely\n");
-            return false;
+            if (cmd->cmdsize < sizeof(linkedit_data_command) || fixup_cmd) return false;
+            fixup_cmd = reinterpret_cast<const linkedit_data_command*>(cursor);
         }
         cursor += cmd->cmdsize;
     }
-    return true; // No chained-fixups command: nothing to do.
+    if (!fixup_cmd) return true;
+
+    if (fixup_cmd->dataoff > size || fixup_cmd->datasize > size - fixup_cmd->dataoff ||
+        fixup_cmd->datasize < 28) return false;
+    const uint8_t* payload = data + fixup_cmd->dataoff;
+    const size_t payload_size = fixup_cmd->datasize;
+    struct ChainedHeader {
+        uint32_t fixups_version, starts_offset, imports_offset;
+        uint32_t symbols_offset, imports_count, imports_format, symbols_format;
+    } header{};
+    std::memcpy(&header, payload, sizeof(header));
+    if (header.fixups_version != 0 || header.starts_offset > payload_size ||
+        header.imports_offset > payload_size || header.symbols_offset > payload_size ||
+        header.symbols_format != 0) return false;
+
+    size_t import_entry_size = 0;
+    switch (header.imports_format) {
+    case 1: import_entry_size = 4; break;  // DYLD_CHAINED_IMPORT
+    case 2: import_entry_size = 8; break;  // DYLD_CHAINED_IMPORT_ADDEND
+    case 3: import_entry_size = 16; break; // DYLD_CHAINED_IMPORT_ADDEND64
+    default:
+        std::fprintf(stderr, "[dyld] unsupported chained import format %u\n",
+                     header.imports_format);
+        return false;
+    }
+    if (header.imports_count >
+        (payload_size - header.imports_offset) / import_entry_size) return false;
+
+    std::vector<std::string> import_names;
+    std::vector<int64_t> import_addends;
+    import_names.reserve(header.imports_count);
+    import_addends.reserve(header.imports_count);
+    for (uint32_t i = 0; i < header.imports_count; ++i) {
+        const uint8_t* entry = payload + header.imports_offset +
+                               static_cast<size_t>(i) * import_entry_size;
+        uint64_t raw = 0;
+        std::memcpy(&raw, entry, header.imports_format == 3 ? 8 : 4);
+        uint32_t name_offset = 0;
+        int64_t addend = 0;
+        if (header.imports_format == 3) {
+            name_offset = static_cast<uint32_t>(raw >> 32);
+            std::memcpy(&addend, entry + 8, sizeof(addend));
+        } else {
+            name_offset = static_cast<uint32_t>(raw >> 9);
+            if (header.imports_format == 2) {
+                int32_t small_addend = 0;
+                std::memcpy(&small_addend, entry + 4, sizeof(small_addend));
+                addend = small_addend;
+            }
+        }
+        if (name_offset >= payload_size - header.symbols_offset) return false;
+        const char* name = reinterpret_cast<const char*>(
+            payload + header.symbols_offset + name_offset);
+        const size_t remaining = payload_size - header.symbols_offset - name_offset;
+        const void* nul = std::memchr(name, '\0', remaining);
+        if (!nul) return false;
+        import_names.emplace_back(name, static_cast<const char*>(nul) - name);
+        import_addends.push_back(addend);
+    }
+
+    if (header.starts_offset > payload_size - sizeof(uint32_t)) return false;
+    uint32_t segment_count = 0;
+    std::memcpy(&segment_count, payload + header.starts_offset, sizeof(segment_count));
+    const size_t starts_header_size = sizeof(uint32_t) +
+        static_cast<size_t>(segment_count) * sizeof(uint32_t);
+    if (segment_count > (payload_size - header.starts_offset - sizeof(uint32_t)) /
+                        sizeof(uint32_t)) return false;
+    const uint8_t* segment_offsets = payload + header.starts_offset + sizeof(uint32_t);
+
+    std::vector<uint64_t> segment_vmaddrs;
+    std::vector<uint64_t> segment_vmsizes;
+    uint64_t image_base = UINT64_MAX;
+    cursor = data + sizeof(mach_header_64);
+    for (uint32_t i = 0; i < mh->ncmds; ++i) {
+        const auto* cmd = reinterpret_cast<const load_command*>(cursor);
+        if (cmd->cmd == LC_SEGMENT_64) {
+            const auto* seg = reinterpret_cast<const segment_command_64*>(cursor);
+            if (seg->vmaddr > UINT64_MAX - slide) return false;
+            const uint64_t guest_base = seg->vmaddr + slide;
+            segment_vmaddrs.push_back(guest_base);
+            segment_vmsizes.push_back(seg->vmsize);
+            if (std::strncmp(seg->segname, "__TEXT", sizeof(seg->segname)) == 0)
+                image_base = guest_base;
+        }
+        cursor += cmd->cmdsize;
+    }
+    if (image_base == UINT64_MAX && !segment_vmaddrs.empty())
+        image_base = *std::min_element(segment_vmaddrs.begin(), segment_vmaddrs.end());
+    if (segment_count > segment_vmaddrs.size()) return false;
+    (void)starts_header_size;
+
+    for (uint32_t si = 0; si < segment_count; ++si) {
+        uint32_t info_offset = 0;
+        std::memcpy(&info_offset, segment_offsets + static_cast<size_t>(si) * 4, 4);
+        if (!info_offset) continue;
+        if (info_offset > payload_size - header.starts_offset) return false;
+        const size_t info_pos = static_cast<size_t>(header.starts_offset) + info_offset;
+        if (info_pos > payload_size || payload_size - info_pos < 22) return false;
+        const uint8_t* info = payload + info_pos;
+        uint32_t info_size = 0;
+        uint16_t page_size = 0, pointer_format = 0, page_count = 0;
+        std::memcpy(&info_size, info, 4);
+        std::memcpy(&page_size, info + 4, 2);
+        std::memcpy(&pointer_format, info + 6, 2);
+        std::memcpy(&page_count, info + 20, 2);
+        if (info_size < 22 || info_size > payload_size - info_pos ||
+            (page_size != 4096 && page_size != 16384) ||
+            (pointer_format != 2 && pointer_format != 6) ||
+            page_count > (info_size - 22) / 2 ||
+            segment_vmsizes[si] == 0) return false;
+        const uint8_t* page_starts = info + 22;
+        const size_t starts_array_count = (info_size - 22) / 2;
+
+        for (uint16_t page = 0; page < page_count; ++page) {
+            uint16_t raw_start = 0;
+            std::memcpy(&raw_start, page_starts + static_cast<size_t>(page) * 2, 2);
+            if (raw_start == 0xffff) continue;
+            std::vector<uint16_t> starts_for_page;
+            if (raw_start & 0x8000) {
+                size_t idx = raw_start & 0x7fff;
+                bool last = false;
+                while (idx < starts_array_count) {
+                    uint16_t entry = 0;
+                    std::memcpy(&entry, page_starts + idx * 2, 2);
+                    starts_for_page.push_back(entry & 0x7fff);
+                    ++idx;
+                    if (entry & 0x8000) { last = true; break; }
+                }
+                if (!last) return false;
+            } else {
+                starts_for_page.push_back(raw_start);
+            }
+
+            const uint64_t page_offset = static_cast<uint64_t>(page) * page_size;
+            if (page_offset >= segment_vmsizes[si]) return false;
+            const uint64_t bytes_in_page = std::min<uint64_t>(
+                page_size, segment_vmsizes[si] - page_offset);
+            for (uint16_t start_off : starts_for_page) {
+                uint64_t chain_off = start_off;
+                for (uint64_t hops = 0; hops <= page_size / 4; ++hops) {
+                    if (chain_off > bytes_in_page || bytes_in_page - chain_off < 8)
+                        return false;
+                    const uint64_t guest_slot = segment_vmaddrs[si] + page_offset + chain_off;
+                    uint8_t* slot = g2h(guest_slot);
+                    if (!slot) return false;
+                    uint64_t value = 0;
+                    std::memcpy(&value, slot, sizeof(value));
+                    const bool is_bind = (value >> 63) != 0;
+                    const uint32_t next = static_cast<uint32_t>((value >> 51) & 0xfff);
+                    if (is_bind) {
+                        const uint32_t ordinal = static_cast<uint32_t>(value & 0xffffff);
+                        if (ordinal >= import_names.size()) return false;
+                        const int8_t pointer_addend = static_cast<int8_t>((value >> 24) & 0xff);
+                        const GuestPtr resolved = resolve_symbol(import_names[ordinal]);
+                        if (!resolved) return false;
+                        const uint64_t bound = resolved + static_cast<uint64_t>(
+                            import_addends[ordinal] + pointer_addend);
+                        std::memcpy(slot, &bound, sizeof(bound));
+                    } else {
+                        uint64_t target = value & ((uint64_t{1} << 36) - 1);
+                        if (pointer_format == 2) {
+                            target |= ((value >> 36) & 0xff) << 56;
+                            target += slide;
+                        } else {
+                            if (target > UINT64_MAX - image_base) return false;
+                            target += image_base;
+                        }
+                        std::memcpy(slot, &target, sizeof(target));
+                    }
+                    if (next == 0) break;
+                    if (hops == page_size / 4 ||
+                        next > (bytes_in_page - chain_off - 8) / 4) return false;
+                    chain_off += static_cast<uint64_t>(next) * 4;
+                }
+            }
+        }
+    }
+    return true;
 }
 
 bool DyldLinker::apply_fixups(const uint8_t* data, size_t size,
