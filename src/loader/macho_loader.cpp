@@ -1,5 +1,6 @@
 #include "loader/macho_loader.h"
 #include <mach-o/loader.h>
+#include <mach/arm/thread_status.h>
 #include <mach-o/fat.h>
 #include <libkern/OSByteOrder.h>
 #include <mach/vm_prot.h>
@@ -191,14 +192,23 @@ bool MachOLoader::parse_load_commands(const uint8_t* data, size_t size, LoadedBi
             break;
         }
         case LC_UNIXTHREAD: {
-            // ARM64 thread state stores PC after x0-x28, fp, lr and sp.
-            constexpr size_t arm64_pc_end = 16 + 33 * sizeof(uint64_t);
-            if (lc->cmdsize < arm64_pc_end) {
-                error_msg_ = "Truncated ARM64 LC_UNIXTHREAD state";
+            // A thread command contains flavor/count followed by a flavor-specific
+            // state. ARM_THREAD_STATE64_COUNT is measured in 32-bit words.
+            if (lc->cmdsize < 16) {
+                error_msg_ = "Truncated LC_UNIXTHREAD header";
+                return false;
+            }
+            uint32_t flavor = 0, count = 0;
+            std::memcpy(&flavor, cursor + 8, sizeof(flavor));
+            std::memcpy(&count, cursor + 12, sizeof(count));
+            if (flavor != ARM_THREAD_STATE64 || count < ARM_THREAD_STATE64_COUNT ||
+                count > (lc->cmdsize - 16) / sizeof(uint32_t) ||
+                static_cast<size_t>(count) * sizeof(uint32_t) < 33 * sizeof(uint64_t)) {
+                error_msg_ = "Invalid or truncated ARM64 LC_UNIXTHREAD state";
                 return false;
             }
             const uint64_t* state = reinterpret_cast<const uint64_t*>(cursor + 16);
-            binary.entry_point = state[32];
+            binary.entry_point = state[32]; // PC follows X0-X28, FP, LR and SP.
             binary.entry_point_is_file_offset = false;
             found_entry = true;
             break;
