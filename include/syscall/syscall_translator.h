@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include "interpreter/interpreter.h"
 
 // ARM64 macOS syscall numbers differ from x86-64 macOS syscall numbers
