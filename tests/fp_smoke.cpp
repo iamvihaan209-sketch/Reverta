@@ -53,6 +53,7 @@ int main() {
     put32(code + 80, 0xBD400030); // ldr s16, [x1]
     put32(code + 84, 0xFD00042F); // str d15, [x1, #8]
     put32(code + 88, 0xFD400431); // ldr d17, [x1, #8]
+    put32(code + 92, 0x1E220C33); // fcsel s19, s1, s2, eq
 
     LoadedBinary binary{};
     Segment text{};
@@ -123,7 +124,9 @@ int main() {
     assert(interpreter.step());
     assert(interpreter.step());
     assert(as_double(state.q[17][0]) == 3.75);
-    assert(state.pc == 0x105C);
+    assert(interpreter.step());
+    assert(as_float(state.q[19][0]) == 2.25f); // Z was clear, so EQ selects S2.
+    assert(state.pc == 0x1060);
 
     alignas(4) uint8_t unsupported[4]{};
     put32(unsupported, 0x1E80F000);
