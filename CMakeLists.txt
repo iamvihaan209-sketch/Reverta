@@ -62,4 +62,11 @@ if(BUILD_TESTING)
     )
     target_include_directories(reverta_jit_smoke PRIVATE include)
     add_test(NAME reverta_jit_smoke COMMAND reverta_jit_smoke)
+
+    add_executable(reverta_loader_smoke
+        tests/loader_smoke.cpp
+        src/loader/macho_loader.cpp
+    )
+    target_include_directories(reverta_loader_smoke PRIVATE include)
+    add_test(NAME reverta_loader_smoke COMMAND reverta_loader_smoke)
 endif()
