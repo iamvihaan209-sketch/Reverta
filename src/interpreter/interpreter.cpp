@@ -54,6 +54,7 @@ int64_t Interpreter::mmap_guest(uint64_t requested_address, size_t length, int p
 
     uint64_t guest_address = 0;
     if (requested_address != 0 && requested_address % page_size == 0 &&
+        requested_address <= static_cast<uint64_t>(INT64_MAX) - map_size &&
         !guest_range_overlaps(requested_address, map_size)) {
         guest_address = requested_address;
     } else if (flags & MAP_FIXED) {
