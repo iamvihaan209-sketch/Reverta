@@ -55,7 +55,7 @@ bool SyscallTranslator::copy_guest_string(uint64_t address, std::string& out,
     if (!guest_to_host_ || address == 0) return false;
     for (size_t i = 0; i < max_length; ++i) {
         if (address > UINT64_MAX - i) return false;
-        uint8_t* byte = guest_to_host_(address + i, 1);
+        uint8_t* byte = guest_to_host_(address + i, 1, GuestAccess::Read);
         if (!byte) return false;
         if (*byte == 0) return true;
         out.push_back(static_cast<char>(*byte));
@@ -77,7 +77,7 @@ bool SyscallTranslator::sys_write(CpuState& state) {
     const size_t count = static_cast<size_t>(state.x[2]);
     void* buf = nullptr;
     if (count != 0) {
-        buf = guest_to_host_ ? guest_to_host_(state.x[1], count) : nullptr;
+        buf = guest_to_host_ ? guest_to_host_(state.x[1], count, GuestAccess::Read) : nullptr;
         if (!buf) {
             state.x[0] = static_cast<uint64_t>(-EFAULT);
             return true;
@@ -98,7 +98,7 @@ bool SyscallTranslator::sys_read(CpuState& state) {
     const size_t count = static_cast<size_t>(state.x[2]);
     void* buf = nullptr;
     if (count != 0) {
-        buf = guest_to_host_ ? guest_to_host_(state.x[1], count) : nullptr;
+        buf = guest_to_host_ ? guest_to_host_(state.x[1], count, GuestAccess::Write) : nullptr;
         if (!buf) {
             state.x[0] = static_cast<uint64_t>(-EFAULT);
             return true;
