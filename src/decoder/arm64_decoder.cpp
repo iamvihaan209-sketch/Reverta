@@ -236,9 +236,22 @@ Arm64Insn Arm64Decoder::decode_loads_stores(uint32_t insn, uint64_t pc) const {
     uint32_t size    = bits(insn, 31, 30);
     bool     V       = bits(insn, 26, 26); // SIMD/FP
     bool     load    = bits(insn, 22, 22);
-    (void)V;
 
     out.is64 = (size == 3);
+    if (V) {
+        // Scalar S/D loads and stores use size encodings 10/11. Vector and
+        // byte/half scalar forms remain unsupported rather than being decoded
+        // as integer register operations.
+        if (size < 2) {
+            out.op = Arm64Op::UNKNOWN;
+            return out;
+        }
+        out.is_fp = true;
+        const uint32_t imm12_fp = bits(insn, 21, 10);
+        out.imm = static_cast<int64_t>(imm12_fp) * (out.is64 ? 8 : 4);
+        out.op = load ? Arm64Op::LDR_IMM : Arm64Op::STR_IMM;
+        return out;
+    }
 
     // LDP / STP — [29:28]=10, [27:26]=10
     if (op28_27 == 0b10 && bits(insn, 27, 26) == 0b10) {
