@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
     // ── Set up interpreter ────────────────────────────────────────────────────
     Interpreter interp(binary);
     SyscallTranslator syscalls(
-        [&](uint64_t address, size_t size) { return interp.guest_to_host(address, size); },
+        [&](uint64_t address, size_t size, GuestAccess access) { return interp.guest_to_host(address, size, access); },
         [&](uint64_t address, size_t size, int prot, int flags, int fd, int64_t offset) {
             return interp.mmap_guest(address, size, prot, flags, fd, offset);
         },
