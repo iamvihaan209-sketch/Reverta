@@ -69,4 +69,11 @@ if(BUILD_TESTING)
     )
     target_include_directories(reverta_loader_smoke PRIVATE include)
     add_test(NAME reverta_loader_smoke COMMAND reverta_loader_smoke)
+
+    add_executable(reverta_dyld_smoke
+        tests/dyld_linker_smoke.cpp
+        src/dylink/dyld_linker.cpp
+    )
+    target_include_directories(reverta_dyld_smoke PRIVATE include)
+    add_test(NAME reverta_dyld_smoke COMMAND reverta_dyld_smoke)
 endif()
