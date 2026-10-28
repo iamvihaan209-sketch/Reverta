@@ -257,7 +257,12 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
         if (seg.initprot & VM_PROT_WRITE) prot |= PROT_WRITE;
         if (seg.initprot & VM_PROT_EXECUTE) prot |= PROT_EXEC;
 
-        void* requested = reinterpret_cast<void*>(seg.vmaddr + slide);
+        if (seg.vmaddr > std::numeric_limits<uint64_t>::max() - slide) {
+            error_msg_ = "Slid segment address overflows";
+            return false;
+        }
+        seg.mapped_vmaddr = seg.vmaddr + slide;
+        void* requested = reinterpret_cast<void*>(seg.mapped_vmaddr);
         void* addr = ::mmap(requested, static_cast<size_t>(seg.vmsize),
             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
         if (addr == MAP_FAILED) {
@@ -277,7 +282,8 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
     bool text_found = false;
     for (const auto& seg : binary.segments) {
         if (seg.name == "__TEXT") {
-            if (binary.entry_point > std::numeric_limits<uint64_t>::max() - seg.vmaddr - slide) {
+            if (seg.vmaddr > std::numeric_limits<uint64_t>::max() - slide ||
+                binary.entry_point > std::numeric_limits<uint64_t>::max() - (seg.vmaddr + slide)) {
                 error_msg_ = "Entry-point address overflows";
                 return false;
             }
