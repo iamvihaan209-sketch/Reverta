@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Reverta VERSION 0.2.0 LANGUAGES CXX)
+project(Reverta VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,10 @@ set(SOURCES
     src/foundation/foundation_stubs.cpp
     src/appkit/appkit_stubs.cpp
     src/dylib/dylib_interceptor.cpp
+    # Phase 3 — dynamic linker
+    src/dylink/dyld_linker.cpp
+    # Phase 4 — NEON/SIMD
+    src/simd/neon_simd.cpp
 )
 
 add_executable(reverta ${SOURCES})
@@ -44,7 +48,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 target_compile_options(reverta PRIVATE
-    -Wall -Wextra
+    -Wall -Wextra -msse4.2
     $<$<CONFIG:Release>:-O3>
     $<$<CONFIG:Debug>:-g -O0>
 )
