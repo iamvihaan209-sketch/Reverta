@@ -241,16 +241,36 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
 
     switch (insn.op) {
     case Arm64Op::LDR_IMM: case Arm64Op::LDR_REG: {
-        uint64_t val = insn.is64
-            ? *reinterpret_cast<uint64_t*>(host)
-            : *reinterpret_cast<uint32_t*>(host);
-        state_.set_reg(insn.rd, val);
+        if (insn.is_fp) {
+            if (insn.is64) {
+                std::memcpy(&state_.q[insn.rd][0], host, sizeof(uint64_t));
+            } else {
+                uint32_t value = 0;
+                std::memcpy(&value, host, sizeof(value));
+                state_.q[insn.rd][0] = value;
+            }
+            state_.q[insn.rd][1] = 0;
+        } else {
+            uint64_t val = insn.is64
+                ? *reinterpret_cast<uint64_t*>(host)
+                : *reinterpret_cast<uint32_t*>(host);
+            state_.set_reg(insn.rd, val);
+        }
         break;
     }
     case Arm64Op::STR_IMM: case Arm64Op::STR_REG: {
-        uint64_t val = state_.reg(insn.rd);
-        if (insn.is64) *reinterpret_cast<uint64_t*>(host) = val;
-        else           *reinterpret_cast<uint32_t*>(host) = (uint32_t)val;
+        if (insn.is_fp) {
+            if (insn.is64) {
+                std::memcpy(host, &state_.q[insn.rd][0], sizeof(uint64_t));
+            } else {
+                const uint32_t value = static_cast<uint32_t>(state_.q[insn.rd][0]);
+                std::memcpy(host, &value, sizeof(value));
+            }
+        } else {
+            uint64_t val = state_.reg(insn.rd);
+            if (insn.is64) *reinterpret_cast<uint64_t*>(host) = val;
+            else           *reinterpret_cast<uint32_t*>(host) = (uint32_t)val;
+        }
         break;
     }
     case Arm64Op::LDRB:
