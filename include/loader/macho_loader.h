@@ -23,7 +23,8 @@ struct Segment {
 // the original file mapping has been released.
 struct LoadedBinary {
     std::vector<Segment> segments;
-    uint64_t entry_point = 0;     // guest virtual address including slide
+    uint64_t entry_point = 0;     // raw file offset or preferred PC until segments are mapped; guest VA after load
+    bool entry_point_is_file_offset = false;
     uint64_t base_address = 0;    // slide applied to preferred virtual addresses
     uint64_t stack_top = 0;       // initial stack pointer
     std::vector<std::string> dylibs;
