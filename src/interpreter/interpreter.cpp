@@ -173,7 +173,7 @@ RunResult Interpreter::run() {
         if (jit.run(state_))
             continue;
 
-        uint8_t* host_pc = guest_to_host(state_.pc, sizeof(uint32_t));
+        uint8_t* host_pc = guest_to_host(state_.pc, sizeof(uint32_t), GuestAccess::Execute);
         if (!host_pc) {
             std::fprintf(stderr, "[reverta] FAULT: PC 0x%llx unmapped\n",
                          (unsigned long long)state_.pc);
@@ -214,7 +214,7 @@ RunResult Interpreter::run() {
 
 bool Interpreter::step() {
     if (faulted_) return false;
-    uint8_t* host_pc = guest_to_host(state_.pc, sizeof(uint32_t));
+    uint8_t* host_pc = guest_to_host(state_.pc, sizeof(uint32_t), GuestAccess::Execute);
     if (!host_pc) return false;
     Arm64Insn insn = decoder_.decode(host_pc, state_.pc);
     uint64_t old_pc = state_.pc;
