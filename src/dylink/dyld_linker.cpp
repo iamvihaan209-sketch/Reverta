@@ -28,6 +28,11 @@ void DyldLinker::register_dylib(LoadedDylib lib) {
 }
 
 GuestPtr DyldLinker::resolve_symbol(const std::string& name) {
+    if (name.empty()) {
+        std::fprintf(stderr, "[dyld] refusing to resolve an empty symbol name\\n");
+        return 0;
+    }
+
     auto it = symbol_map_.find(name);
     if (it != symbol_map_.end()) return it->second;
 
@@ -60,10 +65,13 @@ void DyldLinker::patch_got_slot(uint8_t* host_addr, const std::string& symbol) {
                  (unsigned long long)val);
 }
 
-bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t /*size*/,
+bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t size,
                                   uint64_t slide,
                                   const std::function<uint8_t*(uint64_t)>& g2h) {
+    if (!data || size < sizeof(mach_header_64)) return false;
     auto* mh = reinterpret_cast<const mach_header_64*>(data);
+    if (mh->magic != MH_MAGIC_64) return false;
+    if (mh->sizeofcmds > size - sizeof(mach_header_64)) return false;
     const uint8_t* lc = data + sizeof(mach_header_64);
 
     const uint8_t* bind_data = nullptr;
@@ -71,10 +79,19 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t /*size*/,
     const uint8_t* lazy_bind_data = nullptr;
     uint32_t       lazy_bind_size = 0;
 
+    const uint8_t* command_end = lc + mh->sizeofcmds;
     for (uint32_t i = 0; i < mh->ncmds; i++) {
+        if (lc > command_end || static_cast<size_t>(command_end - lc) < sizeof(load_command))
+            return false;
         auto* cmd = reinterpret_cast<const load_command*>(lc);
+        if (cmd->cmdsize < sizeof(load_command) ||
+            static_cast<size_t>(command_end - lc) < cmd->cmdsize) return false;
         if (cmd->cmd == LC_DYLD_INFO || cmd->cmd == LC_DYLD_INFO_ONLY) {
+            if (cmd->cmdsize < sizeof(dyld_info_command)) return false;
             auto* di = reinterpret_cast<const dyld_info_command*>(lc);
+            if (di->bind_off > size || di->bind_size > size - di->bind_off ||
+                di->lazy_bind_off > size || di->lazy_bind_size > size - di->lazy_bind_off)
+                return false;
             bind_data      = data + di->bind_off;
             bind_size      = di->bind_size;
             lazy_bind_data = data + di->lazy_bind_off;
@@ -198,16 +215,27 @@ bool DyldLinker::parse_dyld_info(const uint8_t* data, size_t /*size*/,
     return true;
 }
 
-bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t /*size*/,
+bool DyldLinker::parse_chained_fixups(const uint8_t* data, size_t size,
                                        uint64_t slide,
                                        const std::function<uint8_t*(uint64_t)>& g2h) {
+    if (!data || size < sizeof(mach_header_64)) return false;
     auto* mh = reinterpret_cast<const mach_header_64*>(data);
+    if (mh->magic != MH_MAGIC_64) return false;
+    if (mh->sizeofcmds > size - sizeof(mach_header_64)) return false;
     const uint8_t* lc = data + sizeof(mach_header_64);
 
+    const uint8_t* command_end = lc + mh->sizeofcmds;
     for (uint32_t i = 0; i < mh->ncmds; i++) {
+        if (lc > command_end || static_cast<size_t>(command_end - lc) < sizeof(load_command))
+            return false;
         auto* cmd = reinterpret_cast<const load_command*>(lc);
+        if (cmd->cmdsize < sizeof(load_command) ||
+            static_cast<size_t>(command_end - lc) < cmd->cmdsize) return false;
         if (cmd->cmd == LC_DYLD_CHAINED_FIXUPS) {
+            if (cmd->cmdsize < sizeof(linkedit_data_command)) return false;
             auto* cf = reinterpret_cast<const linkedit_data_command*>(lc);
+            if (cf->dataoff > size || cf->datasize > size - cf->dataoff ||
+                cf->datasize < 28) return false;
             const uint8_t* fixups = data + cf->dataoff;
 
             struct ChainedHeader {
