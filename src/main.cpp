@@ -74,7 +74,9 @@ int main(int argc, char** argv) {
 
     // ── Set up interpreter ────────────────────────────────────────────────────
     Interpreter interp(binary);
-    SyscallTranslator syscalls([&](uint64_t address, size_t size) {\n        return interp.guest_to_host(address, size);\n    });
+    SyscallTranslator syscalls([&](uint64_t address, size_t size) {
+        return interp.guest_to_host(address, size);
+    });
     DylibInterceptor& dylib = DylibInterceptor::instance();
 
     interp.set_syscall_handler([&](CpuState& state) -> bool {
