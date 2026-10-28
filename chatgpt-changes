@@ -137,3 +137,12 @@ Changes committed after the initial handoff:
 - `work/v0.6-to-v1-roadmap` is 53 commits ahead of `main` and 2 commits behind/diverged. The current main-ahead commits have no file diff in the compare response, but inspect the exact commit history and GitHub PR mergeability again before merging.
 - `work/v0.6-to-v1-roadmap` already descends from `work/dyld-linker-hardening`; the old draft PR #1 is therefore an ancestor-only change relative to the roadmap branch. Do not merge PR #1 separately into main in a way that conflicts with the planned full integration. When v1.0 is genuinely ready, open/refresh a PR from the roadmap branch, confirm its CI and mergeability, then merge once the owner is comfortable with the scope.
 - Current state remains **pre-v1.0**. A passing CI run validates only the implemented tests, not real-world app compatibility. Bundled dylib loading/export-trie lookup, full instruction coverage, full syscalls/runtime behavior, and end-to-end real Mach-O fixtures remain incomplete.
+
+
+### Scalar FP follow-up (latest verified run)
+- Added bounded decode/execute support for scalar `FMOV` immediate constants using the AArch64 VFPExpandImm bit expansion.
+- Added `FMOV Wd, Sn`, `FMOV Xd, Dn`, `FMOV Sn, Wn`, and `FMOV Dn, Xn` register-transfer forms.
+- Expanded `tests/fp_smoke.cpp` to verify `FMOV S8, #1.0`, `FMOV D9, #-2.0`, and transfers from S/D registers into W/X registers.
+- During implementation, CI caught escaped-newline syntax errors in the decoder; those were fixed. A subsequent correction fixed the exponent replication width in immediate expansion.
+- Run #79 at commit `cf3d43bb` completed successfully: Configure, Build and Test passed: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40770212933
+- This expands only scalar FP. Still missing include FNEG/FABS, FCMPE, conversions, FP loads/stores and broader SIMD/vector operations. Do not label v0.7 complete yet.
