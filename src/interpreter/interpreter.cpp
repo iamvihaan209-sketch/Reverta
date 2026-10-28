@@ -16,8 +16,9 @@ Interpreter::Interpreter(const LoadedBinary& binary)
 uint8_t* Interpreter::guest_to_host(uint64_t vaddr) const {
     for (const auto& seg : binary_.segments) {
         if (!seg.mapped) continue;
-        if (vaddr >= seg.vmaddr && vaddr < seg.vmaddr + seg.vmsize) {
-            return seg.mapped + (vaddr - seg.vmaddr);
+        const uint64_t guest_base = seg.mapped_vmaddr ? seg.mapped_vmaddr : seg.vmaddr;
+        if (vaddr >= guest_base && vaddr - guest_base < seg.vmsize) {
+            return seg.mapped + (vaddr - guest_base);
         }
     }
     return nullptr;
