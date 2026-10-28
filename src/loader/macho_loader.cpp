@@ -273,10 +273,8 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
         seg.mapped = static_cast<uint8_t*>(addr);
         if (seg.filesize)
             std::memcpy(seg.mapped, data + seg.fileoff, static_cast<size_t>(seg.filesize));
-        if (::mprotect(addr, static_cast<size_t>(seg.vmsize), prot) != 0) {
-            error_msg_ = "Failed to set segment protections for " + seg.name;
-            return false;
-        }
+        // Keep the mapped segment writable while the dynamic linker applies
+        // relocations. finalize_protections() restores the Mach-O protections.
     }
 
     bool text_found = false;
@@ -305,5 +303,20 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
     }
     binary.stack_top = reinterpret_cast<uint64_t>(stack) + STACK_SIZE;
     binary.stack_top &= ~0xFULL;
+    return true;
+}
+
+bool MachOLoader::finalize_protections(const LoadedBinary& binary) {
+    for (const auto& seg : binary.segments) {
+        if (!seg.mapped || seg.vmsize == 0) continue;
+        int prot = PROT_NONE;
+        if (seg.initprot & VM_PROT_READ) prot |= PROT_READ;
+        if (seg.initprot & VM_PROT_WRITE) prot |= PROT_WRITE;
+        if (seg.initprot & VM_PROT_EXECUTE) prot |= PROT_EXEC;
+        if (::mprotect(seg.mapped, static_cast<size_t>(seg.vmsize), prot) != 0) {
+            error_msg_ = "Failed to set segment protections for " + seg.name;
+            return false;
+        }
+    }
     return true;
 }
