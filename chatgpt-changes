@@ -198,3 +198,12 @@ Changes committed after the initial handoff:
 - Added reverta_integration_smoke, which writes a tiny ARM64 Mach-O executable (MOV X0,#42; SVC #0), loads it through MachOLoader, then runs it through Interpreter with a test syscall handler. The first CI attempt at commit f4b575fb failed only because CMake saw the target before tests/integration_smoke.cpp had been committed; the source file is now present and subsequent runs are pending. The ARM_THREAD_STATE64 SDK macros were not available in the Intel runner's SDK; they were replaced with the Mach-O-defined flavor/count values (6 / 68). Verify the newest CI run before considering this regression fixed.
 - CI run #106 at feed2d1f passed after reconciling the scalar FP test slots: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40773824352
 - Current head includes additional weak-dylib/import handling being developed; check its CI before treating it as stable. The roadmap branch remains pre-v1.0. Do not merge into main until the latest full CI is green and the owner agrees to merge this broader change set.
+
+
+### Latest v0.6/v0.7 integration work (CI verified)
+- Weak dependencies are tracked separately from strong `LC_LOAD_DYLIB` dependencies. A missing weak dylib path is tolerated; a missing strong dylib remains a hard failure.
+- Classic `BIND_SYMBOL_FLAGS_WEAK_IMPORT` and weak flags in chained import entries are honored: unresolved weak imports bind to zero (subject to checked addends), while unresolved strong imports fail. Synthetic tests cover weak and strong classic imports.
+- Added `reverta_integration_smoke`: writes a minimal ARM64 `MH_EXECUTE` Mach-O with `LC_MAIN`, loads it, finalizes protections, interprets `MOV X0, #42` followed by `SVC #0`, and verifies the syscall handler sees 42 and exits normally.
+- Added scalar `FCSEL` decode/execute coverage and a condition-selection regression test.
+- Latest CI run #107 at commit `23b453a7` passed Configure, Build and Test: https://github.com/iamvihaan209-sketch/Reverta/actions/runs/40775210166
+- Remaining weak-link limitation: symbol ordinal/scope resolution is still global-name based, and full weak-symbol / re-export semantics are not implemented.
