@@ -257,12 +257,13 @@ bool MachOLoader::map_segments(const uint8_t* data, size_t size, LoadedBinary& b
             return false;
         }
         seg.mapped_vmaddr = seg.vmaddr + slide;
-        void* requested = reinterpret_cast<void*>(seg.mapped_vmaddr);
-        void* addr = ::mmap(requested, static_cast<size_t>(seg.vmsize),
-            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        // Guest virtual addresses are emulated separately from host pointers.
+        // Never MAP_FIXED a guest address: doing so could replace the emulator's
+        // own mappings. The interpreter/JIT translate mapped_vmaddr to seg.mapped.
+        void* addr = ::mmap(nullptr, static_cast<size_t>(seg.vmsize),
+            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (addr == MAP_FAILED) {
-            error_msg_ = "Failed to map segment " + seg.name +
-                " at requested guest address";
+            error_msg_ = "Failed to allocate host memory for segment " + seg.name;
             return false;
         }
         seg.mapped = static_cast<uint8_t*>(addr);
