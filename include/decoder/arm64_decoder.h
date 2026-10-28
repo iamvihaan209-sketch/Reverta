@@ -67,6 +67,7 @@ struct Arm64Insn {
     // Immediate / offset
     int64_t  imm;
     bool     is64;       // 64-bit variant (vs 32-bit Wn)
+    bool     is_fp;      // scalar floating-point register operand
     bool     set_flags;  // S suffix (ADDS, SUBS, etc.)
 
     Arm64Cond cond;      // for B.cond, CSEL, etc.
