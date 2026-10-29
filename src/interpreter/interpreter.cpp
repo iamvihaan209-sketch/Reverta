@@ -301,6 +301,10 @@ void Interpreter::execute(const Arm64Insn& insn) {
     case Arm64Op::FMUL: case Arm64Op::FDIV: case Arm64Op::FABS: case Arm64Op::FNEG: case Arm64Op::FCVT_SD: case Arm64Op::FCVT_DS:
     case Arm64Op::FCMP: case Arm64Op::FCMPE: case Arm64Op::FCSEL: case Arm64Op::FMOV: case Arm64Op::FMOV_IMM:
     case Arm64Op::FMOV_TO_GPR: case Arm64Op::FMOV_FROM_GPR:
+    case Arm64Op::FSQRT: case Arm64Op::FMAX: case Arm64Op::FMIN:
+    case Arm64Op::FCMP_ZERO: case Arm64Op::FCMPE_ZERO:
+    case Arm64Op::SCVTF: case Arm64Op::UCVTF:
+    case Arm64Op::FCVTZS: case Arm64Op::FCVTZU:
         execute_fp(insn);
         break;
 
@@ -457,7 +461,141 @@ void Interpreter::execute_load_store(const Arm64Insn& insn) {
 }
 
 // ── Scalar floating-point execution ──────────────────────────────────────────
+namespace {
+
+// Read a scalar FP register as a double. Single-precision values widen exactly.
+double read_fp_scalar(const CpuState& s, uint8_t reg, bool is64) {
+    if (is64) {
+        double v = 0.0;
+        std::memcpy(&v, &s.q[reg][0], sizeof(v));
+        return v;
+    }
+    const uint32_t bits = static_cast<uint32_t>(s.q[reg][0]);
+    float f = 0.0f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+// Write a scalar FP register, rounding to single precision when !is64.
+void write_fp_scalar(CpuState& s, uint8_t reg, bool is64, double v) {
+    if (is64) {
+        std::memcpy(&s.q[reg][0], &v, sizeof(v));
+    } else {
+        const float f = static_cast<float>(v);
+        uint32_t bits = 0;
+        std::memcpy(&bits, &f, sizeof(bits));
+        s.q[reg][0] = bits;
+    }
+    s.q[reg][1] = 0;
+}
+
+// FCMP/FCMPE flags: unordered (either NaN) gives NZCV = 0011; otherwise ordinary compare.
+void set_fp_compare_flags(CpuState& s, double a, double b) {
+    if (std::isnan(a) || std::isnan(b)) {
+        s.n = false; s.z = false; s.c = true; s.v = true;
+    } else {
+        s.n = a < b;
+        s.z = a == b;
+        s.c = a >= b;
+        s.v = false;
+    }
+}
+
+} // namespace
+
 void Interpreter::execute_fp(const Arm64Insn& insn) {
+    switch (insn.op) {
+    case Arm64Op::FCMP_ZERO:
+    case Arm64Op::FCMPE_ZERO:
+        set_fp_compare_flags(state_, read_fp_scalar(state_, insn.rn, insn.is64), 0.0);
+        return;
+
+    case Arm64Op::SCVTF:
+    case Arm64Op::UCVTF: {
+        // Integer source width comes from sf (gpr64); precision from the type field (is64).
+        const uint64_t src = state_.reg(insn.rn);
+        const bool is_signed = insn.op == Arm64Op::SCVTF;
+        double value = 0.0;
+        if (insn.is64) {
+            value = insn.gpr64
+                ? (is_signed ? static_cast<double>(static_cast<int64_t>(src)) : static_cast<double>(src))
+                : (is_signed ? static_cast<double>(static_cast<int32_t>(src)) : static_cast<double>(static_cast<uint32_t>(src)));
+            write_fp_scalar(state_, insn.rd, true, value);
+        } else {
+            // Convert straight to float: going through double could round twice.
+            const float f = insn.gpr64
+                ? (is_signed ? static_cast<float>(static_cast<int64_t>(src)) : static_cast<float>(src))
+                : (is_signed ? static_cast<float>(static_cast<int32_t>(src)) : static_cast<float>(static_cast<uint32_t>(src)));
+            uint32_t bits = 0;
+            std::memcpy(&bits, &f, sizeof(bits));
+            state_.q[insn.rd][0] = bits;
+            state_.q[insn.rd][1] = 0;
+        }
+        return;
+    }
+
+    case Arm64Op::FCVTZS:
+    case Arm64Op::FCVTZU: {
+        // Round toward zero and saturate to the destination range; NaN becomes 0.
+        const double v = read_fp_scalar(state_, insn.rn, insn.is64);
+        uint64_t result = 0;
+        if (!std::isnan(v)) {
+            const double t = std::trunc(v);
+            if (insn.op == Arm64Op::FCVTZS) {
+                if (insn.gpr64) {
+                    if (t >= 9223372036854775808.0) result = static_cast<uint64_t>(INT64_MAX);
+                    else if (t < -9223372036854775808.0) result = static_cast<uint64_t>(INT64_MIN);
+                    else result = static_cast<uint64_t>(static_cast<int64_t>(t));
+                } else {
+                    if (t >= 2147483648.0) result = static_cast<uint32_t>(INT32_MAX);
+                    else if (t < -2147483648.0) result = static_cast<uint32_t>(INT32_MIN);
+                    else result = static_cast<uint32_t>(static_cast<int32_t>(t));
+                }
+            } else {
+                if (t < 0.0) {
+                    result = 0;
+                } else if (insn.gpr64) {
+                    result = t >= 18446744073709551616.0 ? UINT64_MAX : static_cast<uint64_t>(t);
+                } else {
+                    result = t >= 4294967296.0 ? UINT32_MAX : static_cast<uint64_t>(t);
+                }
+            }
+        }
+        state_.set_reg(insn.rd, result);
+        return;
+    }
+
+    case Arm64Op::FSQRT: {
+        const double v = read_fp_scalar(state_, insn.rn, insn.is64);
+        // NaN inputs propagate; sqrt of a negative number is the default (positive) NaN.
+        const double r = std::isnan(v) ? v : (v < 0.0 ? std::nan("") : std::sqrt(v));
+        write_fp_scalar(state_, insn.rd, insn.is64, r);
+        return;
+    }
+
+    case Arm64Op::FMAX:
+    case Arm64Op::FMIN: {
+        const double a = read_fp_scalar(state_, insn.rn, insn.is64);
+        const double b = read_fp_scalar(state_, insn.rm, insn.is64);
+        const bool is_max = insn.op == Arm64Op::FMAX;
+        double r = 0.0;
+        if (std::isnan(a) || std::isnan(b)) {
+            r = std::isnan(a) ? a : b;                 // NaN operand propagates
+        } else if (a == b) {
+            // +0 and -0 compare equal: FMAX prefers +0, FMIN prefers -0.
+            const bool pick_a = is_max ? !std::signbit(a) : std::signbit(a);
+            r = pick_a ? a : b;
+        } else {
+            r = is_max ? (a > b ? a : b) : (a < b ? a : b);
+        }
+        write_fp_scalar(state_, insn.rd, insn.is64, r);
+        return;
+    }
+
+    default:
+        break;
+    }
+
     if (insn.op == Arm64Op::FCSEL) {
         const uint8_t source = eval_cond(insn.cond) ? insn.rn : insn.rm;
         state_.q[insn.rd][0] = insn.is64

@@ -236,6 +236,38 @@ Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
         out.op = Arm64Op::FMOV;
         return out;
     }
+    if ((insn & 0xFF3FFC00) == 0x1E21C000) {        // FSQRT Fd, Fn
+        out.op = Arm64Op::FSQRT;
+        return out;
+    }
+    if ((insn & 0xFF20FC00) == 0x1E204800) {        // FMAX Fd, Fn, Fm
+        out.op = Arm64Op::FMAX;
+        return out;
+    }
+    if ((insn & 0xFF20FC00) == 0x1E205800) {        // FMIN Fd, Fn, Fm
+        out.op = Arm64Op::FMIN;
+        return out;
+    }
+    if ((insn & 0xFF20FC1F) == 0x1E202008) {        // FCMP Fn, #0.0
+        out.op = Arm64Op::FCMP_ZERO;
+        return out;
+    }
+    if ((insn & 0xFF20FC1F) == 0x1E202018) {        // FCMPE Fn, #0.0
+        out.op = Arm64Op::FCMPE_ZERO;
+        return out;
+    }
+    // Integer <-> FP conversions: sf 0 0 11110 type 1 rmode opcode 000000 Rn Rd.
+    // The rmode/opcode selector sits in bits 20-16 and sf (bit 31) is the integer width.
+    if ((insn & 0x7F20FC00) == 0x1E200000) {
+        out.gpr64 = ((insn >> 31) & 1) != 0;
+        switch (bits(insn, 20, 16)) {
+        case 0x02: out.op = Arm64Op::SCVTF;  return out;   // 00 010
+        case 0x03: out.op = Arm64Op::UCVTF;  return out;   // 00 011
+        case 0x18: out.op = Arm64Op::FCVTZS; return out;   // 11 000
+        case 0x19: out.op = Arm64Op::FCVTZU; return out;   // 11 001
+        default: break;
+        }
+    }
     return out;
 }
 
@@ -427,6 +459,15 @@ std::string Arm64Insn::mnemonic() const {
     case Arm64Op::TBNZ: name = "tbnz"; break;
     case Arm64Op::SVC: name = "svc"; break;
     case Arm64Op::NOP: name = "nop"; break;
+    case Arm64Op::FSQRT: name = "fsqrt"; break;
+    case Arm64Op::FMAX: name = "fmax"; break;
+    case Arm64Op::FMIN: name = "fmin"; break;
+    case Arm64Op::FCMP_ZERO: name = "fcmp"; break;
+    case Arm64Op::FCMPE_ZERO: name = "fcmpe"; break;
+    case Arm64Op::SCVTF: name = "scvtf"; break;
+    case Arm64Op::UCVTF: name = "ucvtf"; break;
+    case Arm64Op::FCVTZS: name = "fcvtzs"; break;
+    case Arm64Op::FCVTZU: name = "fcvtzu"; break;
     case Arm64Op::UNKNOWN: break;
     }
     std::ostringstream oss;

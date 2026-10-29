@@ -32,6 +32,10 @@ enum class Arm64Op {
     FADD, FSUB, FMUL, FDIV, FABS, FNEG, FCVT_SD, FCVT_DS,
     FCMP, FCMPE, FCSEL,
     FMOV, FMOV_IMM, FMOV_TO_GPR, FMOV_FROM_GPR,
+    FSQRT, FMAX, FMIN,
+    FCMP_ZERO, FCMPE_ZERO,              // FCMP Fn, #0.0 / FCMPE Fn, #0.0
+    SCVTF, UCVTF,                       // integer -> FP (signed / unsigned)
+    FCVTZS, FCVTZU,                     // FP -> integer, round toward zero
     // Load/Store
     LDR_REG, LDR_IMM,
     STR_REG, STR_IMM,
@@ -68,6 +72,8 @@ struct Arm64Insn {
     // Immediate / offset
     int64_t  imm;
     uint8_t  move_shift = 0; // MOVZ/MOVN/MOVK: 16 * hw (0, 16, 32, 48)
+    bool     gpr64 = false;  // integer-side width for int<->FP conversions (sf bit);
+                             // is64 then names the FP precision (type bits)
     bool     is64;       // 64-bit variant (vs 32-bit Wn)
     bool     is_fp;      // scalar floating-point register operand
     bool     set_flags;  // S suffix (ADDS, SUBS, etc.)
