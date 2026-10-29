@@ -123,4 +123,28 @@ if(BUILD_TESTING)
     )
     target_include_directories(reverta_fp_convert_smoke PRIVATE include)
     add_test(NAME reverta_fp_convert_smoke COMMAND reverta_fp_convert_smoke)
+
+    # Differential oracle: random single instructions executed by the interpreter
+    # and by Unicorn (independent AArch64 emulator), compared state-for-state.
+    # Runs only when the Python 'unicorn' package is available; otherwise skipped.
+    add_executable(reverta_diff_runner
+        tests/oracle/diff_runner.cpp
+        src/interpreter/interpreter.cpp
+        src/decoder/arm64_decoder.cpp
+        src/jit/jit_compiler.cpp
+    )
+    target_include_directories(reverta_diff_runner PRIVATE include)
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE} -c "import unicorn"
+            RESULT_VARIABLE reverta_unicorn_rc
+            OUTPUT_QUIET ERROR_QUIET)
+        if(reverta_unicorn_rc EQUAL 0)
+            add_test(NAME reverta_diff_oracle
+                COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/oracle/diff_oracle.py
+                    $<TARGET_FILE:reverta_diff_runner> 30000 1)
+        endif()
+    endif()
 endif()

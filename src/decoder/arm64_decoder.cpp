@@ -15,6 +15,7 @@ Arm64Insn Arm64Decoder::decode(const uint8_t* pc, uint64_t vaddr) const {
     uint32_t insn = *reinterpret_cast<const uint32_t*>(pc);
 
     Arm64Insn out{};
+    out.op = Arm64Op::UNKNOWN;  // any path that does not set op stays unknown
     out.raw  = insn;
     out.pc   = vaddr;
     out.op   = Arm64Op::UNKNOWN;
@@ -42,55 +43,155 @@ Arm64Insn Arm64Decoder::decode(const uint8_t* pc, uint64_t vaddr) const {
     return out; // UNKNOWN
 }
 
+// ── Bit masks (DecodeBitMasks, Arm ARM) ──────────────────────────────────────
+static uint64_t element_mask(uint32_t width) {
+    return width >= 64 ? ~0ULL : ((1ULL << width) - 1);
+}
+
+bool arm64_decode_bit_masks(bool is64, uint32_t n, uint32_t imms, uint32_t immr,
+                            bool immediate, uint64_t& wmask, uint64_t& tmask) {
+    const uint32_t datasize = is64 ? 64 : 32;
+    // len = HighestSetBit(N : NOT(imms)), a 7-bit value.
+    const uint32_t len_src = (n << 6) | (~imms & 0x3F);
+    int len = -1;
+    for (int b = 6; b >= 0; --b) {
+        if ((len_src >> b) & 1) { len = b; break; }
+    }
+    if (len < 1) return false;                   // element size must be >= 2
+    const uint32_t esize = 1u << len;
+    if (esize > datasize) return false;
+    const uint32_t levels = esize - 1;
+    const uint32_t S = imms & levels;
+    const uint32_t R = immr & levels;
+    if (immediate && S == levels) return false;  // all-ones element is not a logical immediate
+
+    const uint32_t d = (S - R) & levels;         // low len bits of S - R
+    const uint64_t emask = element_mask(esize);
+    const uint64_t welem = element_mask(S + 1) & emask;
+    const uint64_t telem = element_mask(d + 1) & emask;
+    // Rotate the welem run right by R within the element.
+    const uint64_t rotated = R == 0
+        ? welem
+        : (((welem >> R) | (welem << (esize - R))) & emask);
+
+    auto replicate = [&](uint64_t elem) {
+        uint64_t out = 0;
+        for (uint32_t pos = 0; pos < datasize; pos += esize) out |= elem << pos;
+        return out;
+    };
+    wmask = replicate(rotated);
+    tmask = replicate(telem);
+    return true;
+}
+
+static int64_t sign_extend64(uint64_t v, int width) {
+    const int shift = 64 - width;
+    return static_cast<int64_t>(v << shift) >> shift;
+}
+
 // ── Data processing — immediate ───────────────────────────────────────────────
 Arm64Insn Arm64Decoder::decode_data_proc_imm(uint32_t insn, uint64_t pc) const {
     Arm64Insn out{};
+    out.op = Arm64Op::UNKNOWN;  // any path that does not set op stays unknown
     out.raw = insn; out.pc = pc;
-
-    uint32_t op23 = bits(insn, 25, 23);
     out.is64 = bits(insn, 31, 31);
+    out.rd = bits(insn, 4, 0);
+    out.rn = bits(insn, 9, 5);
 
+    const uint32_t op23 = bits(insn, 25, 23);
     switch (op23) {
-    case 0b010: case 0b011: { // Add/sub immediate
-        bool sub = bits(insn, 30, 30);
-        bool S   = bits(insn, 29, 29);
-        out.rd = bits(insn, 4, 0);
-        out.rn = bits(insn, 9, 5);
-        uint32_t imm12 = bits(insn, 21, 10);
-        uint32_t shift = bits(insn, 23, 22);
-        out.imm = (int64_t)(shift == 1 ? imm12 << 12 : imm12);
-        out.set_flags = S;
-        if (!sub) {
-            out.op = (S && out.rd == 31) ? Arm64Op::CMP_IMM : Arm64Op::ADD_IMM;
+    case 0b000:  // PC-relative: bits 25:23 = 00x, since immhi occupies those bits
+    case 0b001: { // ADR (op=0) or ADRP (op=1, page-aligned)
+        const uint32_t imm21 = (bits(insn, 23, 5) << 2) | bits(insn, 30, 29);
+        out.is64 = true;
+        if (bits(insn, 31, 31)) {
+            out.op  = Arm64Op::ADRP;
+            out.imm = sign_extend64(imm21, 21) << 12;
         } else {
-            out.op = (S && out.rd == 31) ? Arm64Op::CMP_IMM : Arm64Op::SUB_IMM;
-            if (S && out.rd == 31) out.rd = 31;
+            out.op  = Arm64Op::ADR;
+            out.imm = sign_extend64(imm21, 21);
         }
         break;
     }
-    case 0b100: case 0b101: { // Move wide: MOVN (00), MOVZ (10), MOVK (11); 01 is reserved
-        uint32_t opc = bits(insn, 30, 29);
-        out.rd = bits(insn, 4, 0);
-        uint32_t imm16 = bits(insn, 20, 5);
-        uint32_t hw    = bits(insn, 22, 21);
-        out.move_shift = static_cast<uint8_t>(hw * 16);
-        if (opc == 0b01) {
-            out.op = Arm64Op::UNKNOWN;
+    case 0b010: { // Add/sub immediate
+        const bool sub = bits(insn, 30, 30);
+        const bool S   = bits(insn, 29, 29);
+        const uint32_t imm12 = bits(insn, 21, 10);
+        const bool sh = bits(insn, 22, 22);
+        out.imm = static_cast<int64_t>(sh ? (static_cast<uint64_t>(imm12) << 12) : imm12);
+        out.set_flags = S;
+        if (S && out.rd == 31) {
+            out.op = sub ? Arm64Op::CMP_IMM : Arm64Op::CMN_IMM;
+        } else {
+            out.op = sub ? Arm64Op::SUB_IMM : Arm64Op::ADD_IMM;
+        }
+        break;
+    }
+    case 0b100: { // Logical immediate
+        const uint32_t opc = bits(insn, 30, 29);
+        const uint32_t N = bits(insn, 22, 22);
+        const uint32_t immr = bits(insn, 21, 16);
+        const uint32_t imms = bits(insn, 15, 10);
+        if (!out.is64 && N) break;               // reserved for 32-bit
+        uint64_t wmask = 0, tmask = 0;
+        if (!arm64_decode_bit_masks(out.is64, N, imms, immr, true, wmask, tmask)) break;
+        out.imm = static_cast<int64_t>(wmask);
+        out.set_flags = (opc == 0b11);
+        switch (opc) {
+        case 0b00: out.op = Arm64Op::AND_IMM; break;
+        case 0b01: out.op = Arm64Op::ORR_IMM; break;
+        case 0b10: out.op = Arm64Op::EOR_IMM; break;
+        default:   // ANDS; with Rd = XZR it is TST
+            out.op = (out.rd == 31) ? Arm64Op::TST_IMM : Arm64Op::AND_IMM;
             break;
         }
+        break;
+    }
+    case 0b101: { // Move wide: MOVN (00), MOVZ (10), MOVK (11); 01 is reserved
+        const uint32_t opc = bits(insn, 30, 29);
+        const uint32_t imm16 = bits(insn, 20, 5);
+        const uint32_t hw    = bits(insn, 22, 21);
+        if (opc == 0b01 || (!out.is64 && hw > 1)) break;   // reserved
+        out.move_shift = static_cast<uint8_t>(hw * 16);
         if (opc == 0b11) {
             out.imm = imm16;
             out.op  = Arm64Op::MOVK;
             break;
         }
-        int64_t val = (int64_t)((uint64_t)imm16 << (hw * 16));
+        int64_t val = static_cast<int64_t>(static_cast<uint64_t>(imm16) << (hw * 16));
         if (opc == 0b00) val = ~val; // MOVN
         out.imm = val;
         out.op  = Arm64Op::MOV_IMM;
         break;
     }
+    case 0b110: { // Bitfield: SBFM (00), BFM (01), UBFM (10); 11 is reserved
+        const uint32_t opc = bits(insn, 30, 29);
+        const uint32_t N = bits(insn, 22, 22);
+        const uint32_t immr = bits(insn, 21, 16);
+        const uint32_t imms = bits(insn, 15, 10);
+        if (opc == 0b11 || N != out.is64) break;
+        if (!out.is64 && (immr > 31 || imms > 31)) break;
+        uint64_t wmask = 0, tmask = 0;
+        if (!arm64_decode_bit_masks(out.is64, N, imms, immr, false, wmask, tmask)) break;
+        out.immr = static_cast<uint8_t>(immr);
+        out.imms = static_cast<uint8_t>(imms);
+        out.op = opc == 0b00 ? Arm64Op::SBFM : opc == 0b01 ? Arm64Op::BFM : Arm64Op::UBFM;
+        break;
+    }
+    case 0b111: { // Extract: EXTR (rm:rn >> lsb); the ROR alias is EXTR with Rn == Rm
+        const uint32_t N = bits(insn, 22, 22);
+        const uint32_t imms = bits(insn, 15, 10);
+        if (bits(insn, 30, 29) != 0 || bits(insn, 21, 21) != 0) break;
+        if (N != out.is64) break;
+        if (!out.is64 && imms > 31) break;
+        out.rm = bits(insn, 20, 16);
+        out.imm = imms;
+        out.op = Arm64Op::EXTR;
+        break;
+    }
     default:
-        out.op = Arm64Op::UNKNOWN;
+        // 011 is unallocated.
+        break;
     }
     return out;
 }
@@ -98,71 +199,174 @@ Arm64Insn Arm64Decoder::decode_data_proc_imm(uint32_t insn, uint64_t pc) const {
 // ── Data processing — register ────────────────────────────────────────────────
 Arm64Insn Arm64Decoder::decode_data_proc_reg(uint32_t insn, uint64_t pc) const {
     Arm64Insn out{};
+    out.op = Arm64Op::UNKNOWN;  // any path that does not set op stays unknown
     out.raw = insn; out.pc = pc;
     out.is64 = bits(insn, 31, 31);
-    out.rd = bits(insn,  4,  0);
-    out.rn = bits(insn,  9,  5);
+    out.rd = bits(insn, 4, 0);
+    out.rn = bits(insn, 9, 5);
     out.rm = bits(insn, 20, 16);
-    out.set_flags = bits(insn, 29, 29);
 
-    uint32_t op24 = bits(insn, 28, 24);
+    const uint32_t op24 = bits(insn, 28, 24);
+    const uint32_t S    = bits(insn, 29, 29);
 
-    // Conditional select [28:21] = 1101010
-    if ((insn >> 21) == 0b1101010) {
-        uint32_t opc = bits(insn, 30, 30);
-        out.cond = static_cast<Arm64Cond>(bits(insn, 15, 12));
-        switch (opc) {
-        case 0: out.op = Arm64Op::CSEL; break;
-        case 1: out.op = Arm64Op::CSINC; break;
-        default: out.op = Arm64Op::UNKNOWN;
+    // Logical (shifted register): AND/ORR/EOR/ANDS, and BIC/ORN/EON/BICS when N=1.
+    if (op24 == 0b01010) {
+        const uint32_t opc    = bits(insn, 30, 29);
+        const uint32_t N      = bits(insn, 21, 21);
+        const uint32_t shift  = bits(insn, 23, 22);
+        const uint32_t amount = bits(insn, 15, 10);
+        if (!out.is64 && amount > 31) return out;
+        out.shift_kind = static_cast<uint8_t>(shift);
+        out.shift_amount = static_cast<uint8_t>(amount);
+        out.set_flags = (opc == 0b11);
+        static const Arm64Op plain[4]    = {Arm64Op::AND_REG, Arm64Op::ORR_REG, Arm64Op::EOR_REG, Arm64Op::AND_REG};
+        static const Arm64Op inverted[4] = {Arm64Op::BIC_REG, Arm64Op::ORN_REG, Arm64Op::EON_REG, Arm64Op::BIC_REG};
+        out.op = N ? inverted[opc] : plain[opc];
+        if (opc == 0b11 && !N && out.rd == 31) out.op = Arm64Op::TST_REG;  // ANDS to XZR
+        // MOV (register) is ORR Rd, XZR, Rm with no shift.
+        if (opc == 0b01 && !N && out.rn == 31 && shift == 0 && amount == 0)
+            out.op = Arm64Op::MOV_REG;
+        return out;
+    }
+
+    // Add/subtract, shifted register (bit 21 = 0) or extended register (bit 21 = 1).
+    if (op24 == 0b01011) {
+        const bool sub = bits(insn, 30, 30);
+        out.set_flags = S;
+        if (bits(insn, 21, 21) == 0) {
+            const uint32_t shift  = bits(insn, 23, 22);
+            const uint32_t amount = bits(insn, 15, 10);
+            if (shift == 0b11 || (!out.is64 && amount > 31)) return out;
+            out.shift_kind = static_cast<uint8_t>(shift);
+            out.shift_amount = static_cast<uint8_t>(amount);
+            if (!sub) out.op = (S && out.rd == 31) ? Arm64Op::CMN_REG : Arm64Op::ADD_REG;
+            else      out.op = (S && out.rd == 31) ? Arm64Op::CMP_REG : Arm64Op::SUB_REG;
+        } else {
+            const uint32_t option = bits(insn, 15, 13);
+            const uint32_t imm3   = bits(insn, 12, 10);
+            if (bits(insn, 23, 22) != 0 || imm3 > 4) return out;
+            out.shift_kind = static_cast<uint8_t>(option);
+            out.shift_amount = static_cast<uint8_t>(imm3);
+            out.op = sub ? Arm64Op::SUB_EXT : Arm64Op::ADD_EXT;
         }
         return out;
     }
 
-    // Logical shifted register / Add-sub shifted / etc.
-    if (op24 == 0b01011) {
-        // Add/sub shifted register [28:24] = 01011.
-        bool sub = bits(insn, 30, 30);
-        bool S   = bits(insn, 29, 29);
-        uint32_t imm6 = bits(insn, 15, 10);
-        uint32_t shift = bits(insn, 23, 22);
-        out.imm = imm6;
-        (void)shift; // TODO: apply shift
-        if (!sub) {
-            out.op = (S && out.rd == 31) ? Arm64Op::CMP_REG : Arm64Op::ADD_REG;
-        } else {
-            out.op = (S && out.rd == 31) ? Arm64Op::CMP_REG : Arm64Op::SUB_REG;
-        }
-    } else if ((op24 & 0b11111) == 0b11011) {
-        // Data-processing 3-source (MUL etc.)
-        uint32_t opc = bits(insn, 22, 21);
-        switch (opc) {
-        case 0b00: out.op = Arm64Op::MUL; break;
-        case 0b01: out.op = Arm64Op::SMULL; break;
-        case 0b10: out.op = Arm64Op::UMULL; break;
-        default: out.op = Arm64Op::UNKNOWN;
-        }
-    } else {
-        // Logical shifted register
-        uint32_t opc = bits(insn, 30, 29);
-        // MOV (register) is ORR Xd, XZR, Xm
-        if (opc == 0b01 && out.rn == 31 && bits(insn, 15, 10) == 0) {
-            out.op = Arm64Op::MOV_REG;
-        } else {
-            switch (opc) {
-            case 0b00: out.op = Arm64Op::AND_REG; break;
-            case 0b01: out.op = Arm64Op::ORR_REG; break;
-            case 0b10: out.op = Arm64Op::EOR_REG; break;
-            default:   out.op = Arm64Op::UNKNOWN;
-            }
-        }
+    // Add/subtract with carry (op24 = 11010, bits 23-21 = 000, bits 15-10 = 0).
+    if (op24 == 0b11010 && bits(insn, 23, 21) == 0 && bits(insn, 15, 10) == 0) {
+        out.set_flags = S;
+        out.op = bits(insn, 30, 30) ? Arm64Op::SBC : Arm64Op::ADC;
+        return out;
     }
+
+    // Conditional select: CSEL, CSINC, CSINV, CSNEG.
+    if (op24 == 0b11010 && bits(insn, 23, 21) == 0b100) {
+        const uint32_t op2 = bits(insn, 11, 10);
+        if (S || op2 > 1) return out;
+        const uint32_t op = bits(insn, 30, 30);
+        out.cond = static_cast<Arm64Cond>(bits(insn, 15, 12));
+        if (op == 0) out.op = op2 ? Arm64Op::CSINC : Arm64Op::CSEL;
+        else         out.op = op2 ? Arm64Op::CSNEG : Arm64Op::CSINV;
+        return out;
+    }
+
+    // Two-source: UDIV/SDIV and variable shifts.
+    if (op24 == 0b11010 && bits(insn, 23, 21) == 0b110 && bits(insn, 30, 29) == 0) {
+        const uint32_t opc = bits(insn, 15, 10);
+        if (opc >= 0b010000 && opc <= 0b010111) {
+            // CRC32{B,H,W,X} (opc bit 2 = 0) and CRC32C{B,H,W,X} (bit 2 = 1).
+            // X takes a 64-bit Rm and needs sf = 1; the others need sf = 0.
+            const uint32_t kind = opc & 3;
+            if ((kind == 3) != out.is64) return out;
+            static const Arm64Op crc[2][4] = {
+                {Arm64Op::CRC32B, Arm64Op::CRC32H, Arm64Op::CRC32W, Arm64Op::CRC32X},
+                {Arm64Op::CRC32CB, Arm64Op::CRC32CH, Arm64Op::CRC32CW, Arm64Op::CRC32CX},
+            };
+            out.op = crc[(opc >> 2) & 1][kind];
+            return out;
+        }
+        switch (opc) {
+        case 0b000010: out.op = Arm64Op::UDIV; break;
+        case 0b000011: out.op = Arm64Op::SDIV; break;
+        case 0b001000: out.op = Arm64Op::LSL_REG; break;
+        case 0b001001: out.op = Arm64Op::LSR_REG; break;
+        case 0b001010: out.op = Arm64Op::ASR_REG; break;
+        case 0b001011: out.op = Arm64Op::ROR_REG; break;
+        default: break;
+        }
+        return out;
+    }
+
+    // One-source: RBIT, REV16, REV/REV32, CLZ.
+    if (op24 == 0b11010 && bits(insn, 23, 21) == 0b110 && bits(insn, 30, 29) == 0b10
+        && out.rm == 0) {
+        const uint32_t opcode = bits(insn, 15, 10);
+        switch (opcode) {
+        case 0b000000: out.op = Arm64Op::RBIT; break;
+        case 0b000001: out.op = Arm64Op::REV16; break;
+        case 0b000010: out.op = out.is64 ? Arm64Op::REV32 : Arm64Op::REV; break;
+        case 0b000011: if (out.is64) out.op = Arm64Op::REV; break;
+        case 0b000100: out.op = Arm64Op::CLZ; break;
+        case 0b000101: out.op = Arm64Op::CLS; break;
+        default: break;
+        }
+        return out;
+    }
+
+    // Three-source: multiply-add family.
+    if (op24 == 0b11011) {
+        if (bits(insn, 30, 29) != 0) return out;
+        const uint32_t op31 = bits(insn, 23, 21);
+        const bool o0 = bits(insn, 15, 15);
+        out.ra = static_cast<uint8_t>(bits(insn, 14, 10));
+        switch (op31) {
+        case 0b000:  // MADD / MSUB (32- or 64-bit)
+            if (!o0 && out.ra == 31) out.op = Arm64Op::MUL;
+            else out.op = o0 ? Arm64Op::MSUB : Arm64Op::MADD;
+            break;
+        case 0b001:  // SMADDL / SMSUBL (64-bit result from 32-bit sources)
+            if (!out.is64) break;
+            if (!o0 && out.ra == 31) out.op = Arm64Op::SMULL;
+            else out.op = o0 ? Arm64Op::SMSUBL : Arm64Op::SMADDL;
+            break;
+        case 0b010:  // SMULH
+            if (out.is64 && !o0 && out.ra == 31) out.op = Arm64Op::SMULH;
+            break;
+        case 0b101:  // UMADDL / UMSUBL
+            if (!out.is64) break;
+            if (!o0 && out.ra == 31) out.op = Arm64Op::UMULL;
+            else out.op = o0 ? Arm64Op::UMSUBL : Arm64Op::UMADDL;
+            break;
+        case 0b110:  // UMULH
+            if (out.is64 && !o0 && out.ra == 31) out.op = Arm64Op::UMULH;
+            break;
+        default: break;
+        }
+        return out;
+    }
+
+    // Conditional compare: sf op 1 11010010 Rm|imm5 cond 1 x 0 Rn 0 nzcv
+    if (op24 == 0b11010 && bits(insn, 23, 21) == 0b010 && S
+        && bits(insn, 10, 10) == 0 && bits(insn, 4, 4) == 0) {
+        out.cond = static_cast<Arm64Cond>(bits(insn, 15, 12));
+        out.nzcv = static_cast<uint8_t>(bits(insn, 3, 0));
+        const bool ccmp = bits(insn, 30, 30);
+        if (bits(insn, 11, 11)) {
+            out.imm = bits(insn, 20, 16);
+            out.op = ccmp ? Arm64Op::CCMP_IMM : Arm64Op::CCMN_IMM;
+        } else {
+            out.op = ccmp ? Arm64Op::CCMP_REG : Arm64Op::CCMN_REG;
+        }
+        return out;
+    }
+
     return out;
 }
 
 // ── Scalar floating-point instructions ────────────────────────────────────────
 Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
     Arm64Insn out{};
+    out.op = Arm64Op::UNKNOWN;  // any path that does not set op stays unknown
     out.raw = insn;
     out.pc = pc;
     out.op = Arm64Op::UNKNOWN;
@@ -173,6 +377,16 @@ Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
     const uint32_t type = bits(insn, 23, 22);
     if (type > 1) return out;
     out.is64 = type == 1;
+
+    // Three-source fused multiply-add: 0 00 11111 type o1 Rm o0 Ra Rn Rd (M must be 0).
+    if ((insn & 0xFF000000) == 0x1F000000) {
+        const uint32_t o1 = bits(insn, 21, 21);
+        const uint32_t o0 = bits(insn, 15, 15);
+        out.ra = static_cast<uint8_t>(bits(insn, 14, 10));
+        if (o1 == 0) out.op = o0 ? Arm64Op::FMSUB : Arm64Op::FMADD;
+        else         out.op = o0 ? Arm64Op::FNMSUB : Arm64Op::FNMADD;
+        return out;
+    }
 
     const uint32_t fadd_mask = insn & 0xFF20FC00;
     switch (fadd_mask) {
@@ -272,53 +486,171 @@ Arm64Insn Arm64Decoder::decode_fp(uint32_t insn, uint64_t pc) const {
 }
 
 // ── Loads and stores ──────────────────────────────────────────────────────────
+// Top-level groups by bits 29:27: 001 exclusive/ordered/CAS, 011 literal,
+// 101 pairs, 111 single register. Bit 26 is V (SIMD&FP register).
 Arm64Insn Arm64Decoder::decode_loads_stores(uint32_t insn, uint64_t pc) const {
     Arm64Insn out{};
+    out.op = Arm64Op::UNKNOWN;  // any path that does not set op stays unknown
     out.raw = insn; out.pc = pc;
-    out.rd = bits(insn,  4,  0);
-    out.rn = bits(insn,  9,  5);
+    out.rd = bits(insn, 4, 0);
+    out.rn = bits(insn, 9, 5);
     out.rm = bits(insn, 20, 16);
 
-    uint32_t op28_27 = bits(insn, 28, 27);
-    uint32_t size    = bits(insn, 31, 30);
-    bool     V       = bits(insn, 26, 26); // SIMD/FP
-    bool     load    = bits(insn, 22, 22);
+    const uint32_t size  = bits(insn, 31, 30);
+    const bool     V     = bits(insn, 26, 26);
+    const uint32_t group = bits(insn, 29, 27);
+    const uint32_t opc   = bits(insn, 23, 22);
+    const bool     load  = bits(insn, 22, 22);
 
-    out.is64 = (size == 3);
-    if (V) {
-        // Scalar S/D loads and stores use size encodings 10/11. Vector and
-        // byte/half scalar forms remain unsupported rather than being decoded
-        // as integer register operations.
-        if (size < 2) {
-            out.op = Arm64Op::UNKNOWN;
+    // ── Literal (PC-relative): opc 0 V 011 00 imm19 Rt ───────────────────────
+    if (group == 0b011 && bits(insn, 25, 24) == 0) {
+        out.pc_literal = true;
+        out.imm = sign_extend64(bits(insn, 23, 5), 19) << 2;
+        if (V) {
+            if (size == 3) return out;                   // unallocated
+            out.is_fp = true;
+            out.access_bytes = static_cast<uint8_t>(4u << size);   // S, D, Q
+            out.op = Arm64Op::LDR_IMM;
             return out;
         }
+        if (size == 3) { out.op = Arm64Op::NOP; return out; }      // PRFM literal (hint)
+        out.is64 = (size != 0);
+        out.access_bytes = (size == 2) ? 4 : static_cast<uint8_t>(4u << size);
+        out.op = (size == 2) ? Arm64Op::LDRSW : Arm64Op::LDR_IMM;
+        return out;
+    }
+
+    // ── Exclusive, ordered and compare-and-swap: size 001 o2 L o1 Rs o0 Rt2 Rn Rt
+    if (group == 0b001 && bits(insn, 24, 24) == 0 && !V) {
+        const uint32_t o2 = bits(insn, 23, 23);
+        const uint32_t o1 = bits(insn, 21, 21);
+        const uint32_t rs = bits(insn, 20, 16);
+        const uint32_t rt2 = bits(insn, 14, 10);
+        out.ra = static_cast<uint8_t>(rt2);
+        if (o2 == 0 && o1 == 0) {                        // exclusive single: LDXR/STXR (+A/L)
+            if (load && rs != 31) return out;            // LDXR requires Rs = 11111
+            out.is64 = (size == 3);
+            out.access_bytes = static_cast<uint8_t>(1u << size);
+            out.op = load ? Arm64Op::LDEX : Arm64Op::STEX;
+            return out;
+        }
+        if (o2 == 0 && o1 == 1) {                        // exclusive pair: LDXP/STXP (size = 1x)
+            if (size < 2) return out;
+            out.is64 = (size == 3);
+            out.access_bytes = out.is64 ? 8 : 4;
+            out.op = load ? Arm64Op::LDEXP : Arm64Op::STEXP;
+            return out;
+        }
+        if (o2 == 1 && o1 == 0) {                        // ordered: LDAR/STLR family
+            if (rs != 31 || rt2 != 31) return out;
+            out.is64 = (size == 3);
+            out.access_bytes = static_cast<uint8_t>(1u << size);
+            out.op = load ? Arm64Op::LDR_IMM : Arm64Op::STR_IMM;   // acquire/release ordering is a no-op here
+            return out;
+        }
+        if (rt2 != 31) return out;                       // compare-and-swap: CAS{,A,L,AL}
+        out.is64 = (size == 3);
+        out.access_bytes = static_cast<uint8_t>(1u << size);
+        out.op = Arm64Op::CAS;
+        return out;
+    }
+
+    // ── Load/store pair: opc 0 V 101 mode L imm7 Rt2 Rn Rt ───────────────────
+    // mode 000 = non-temporal, 001 = post-index, 010 = signed offset, 011 = pre-index.
+    if (group == 0b101) {
+        const uint32_t mode = bits(insn, 25, 23);
+        if (mode != 0b000 && mode != 0b001 && mode != 0b010 && mode != 0b011) return out;
+        if (size == 3) return out;
+        uint32_t elem = 0;
+        if (V) {
+            out.is_fp = true;
+            elem = 4u << size;                           // S, D, Q
+        } else if (size == 1) {                          // LDPSW (load only)
+            if (!load) return out;
+            elem = 4;
+            out.is64 = true;
+        } else {
+            elem = size == 2 ? 8 : 4;
+            out.is64 = (size == 2);
+        }
+        out.access_bytes = static_cast<uint8_t>(elem);
+        out.ra = static_cast<uint8_t>(bits(insn, 14, 10));       // Rt2
+        out.imm = sign_extend64(bits(insn, 21, 15), 7) * static_cast<int64_t>(elem);
+        out.index_mode = mode == 0b001 ? 2 : (mode == 0b011 ? 1 : 0);
+        if (!V && size == 1) out.op = Arm64Op::LDPSW;
+        else out.op = load ? Arm64Op::LDP : Arm64Op::STP;
+        return out;
+    }
+
+    // ── Single register: size 111 V 00 ... ───────────────────────────────────
+    if (group != 0b111) return out;
+
+    // Atomic memory operations (LSE): size 111 V 00 A R 1 Rs o3 opc 00 Rn Rt.
+    if (!V && bits(insn, 25, 24) == 0 && bits(insn, 21, 21) && bits(insn, 11, 10) == 0b00) {
+        const uint32_t o3 = bits(insn, 15, 15);
+        const uint32_t aop = bits(insn, 14, 12);
+        out.is64 = (size == 3);
+        out.access_bytes = static_cast<uint8_t>(1u << size);
+        if (o3) {
+            if (aop != 0) return out;
+            out.op = Arm64Op::SWP;
+        } else {
+            static const Arm64Op ops[8] = {
+                Arm64Op::LDADD, Arm64Op::LDCLR, Arm64Op::LDEOR, Arm64Op::LDSET,
+                Arm64Op::LDSMAX, Arm64Op::LDSMIN, Arm64Op::LDUMAX, Arm64Op::LDUMIN,
+            };
+            out.op = ops[aop];
+        }
+        return out;
+    }
+
+    // PRFM / PRFUM are hints with no architectural effect.
+    if (!V && size == 3 && opc == 0b10) {
+        out.op = Arm64Op::NOP;
+        return out;
+    }
+
+    // Sign-extending loads: opc 10 loads a 64-bit Rt, opc 11 a 32-bit Rt.
+    const bool sign_extend_load = !V && opc >= 2;
+    if (sign_extend_load && (size == 3 || (opc == 3 && size == 2))) return out;
+
+    if (V) {
+        // Scalar FP/SIMD register size: (opc<1>:size) selects B, H, S, D or Q.
+        const uint32_t vcode = (bits(insn, 23, 23) << 2) | size;
+        if (vcode > 4) return out;
+        static const uint8_t bytes_for[5] = {1, 2, 4, 8, 16};
         out.is_fp = true;
-        const uint32_t imm12_fp = bits(insn, 21, 10);
-        out.imm = static_cast<int64_t>(imm12_fp) * (out.is64 ? 8 : 4);
-        out.op = load ? Arm64Op::LDR_IMM : Arm64Op::STR_IMM;
-        return out;
+        out.access_bytes = bytes_for[vcode];
+    } else {
+        out.access_bytes = static_cast<uint8_t>(1u << size);
+        out.is64 = sign_extend_load ? (opc == 2) : (size == 3);
+    }
+    const bool is_load = V ? load : (sign_extend_load || opc == 1);
+
+    if (bits(insn, 25, 24) == 0b01) {
+        // Unsigned scaled 12-bit offset.
+        out.imm = static_cast<int64_t>(bits(insn, 21, 10)) * out.access_bytes;
+    } else if (bits(insn, 21, 21)) {
+        // Register offset: LDR Rt, [Rn, Rm{, extend {#S}}]. option<1> must be 1.
+        const uint32_t option = bits(insn, 15, 13);
+        if (bits(insn, 11, 10) != 0b10 || (option & 2) == 0) return out;
+        out.reg_offset = true;
+        out.shift_kind = static_cast<uint8_t>(option);
+        const bool scaled = bits(insn, 12, 12);
+        uint32_t shift = 0;
+        for (unsigned s = out.access_bytes; s > 1; s >>= 1) ++shift;
+        out.shift_amount = scaled ? static_cast<uint8_t>(shift) : 0;
+    } else {
+        // Unscaled (LDUR/STUR), pre-index, post-index and unprivileged share bits 25:24 = 00.
+        const uint32_t idx = bits(insn, 11, 10);
+        out.imm = sign_extend64(bits(insn, 20, 12), 9);
+        out.index_mode = idx == 0b01 ? 2 : (idx == 0b11 ? 1 : 0);   // 10 (LDTR) is a plain access at EL0
     }
 
-    // LDP / STP — [29:28]=10, [27:26]=10
-    if (op28_27 == 0b10 && bits(insn, 27, 26) == 0b10) {
-        out.op = load ? Arm64Op::LDP : Arm64Op::STP;
-        int32_t imm7 = sign_extend(bits(insn, 21, 15), 7);
-        out.imm = (int64_t)imm7 * (out.is64 ? 8 : 4);
-        return out;
-    }
-
-    // Load/Store register (unsigned immediate)
-    int32_t imm12 = (int32_t)bits(insn, 21, 10);
-    int scale = (size == 3) ? 3 : (int)size;
-    out.imm = (int64_t)(imm12 << scale);
-
-    switch (size) {
-    case 0: out.op = load ? Arm64Op::LDRB : Arm64Op::STRB; break;
-    case 1: out.op = load ? Arm64Op::LDRH : Arm64Op::STRH; break;
-    case 2: case 3:
-        out.op = load ? Arm64Op::LDR_IMM : Arm64Op::STR_IMM;
-        break;
+    if (sign_extend_load) {
+        out.op = size == 0 ? Arm64Op::LDRSB : size == 1 ? Arm64Op::LDRSH : Arm64Op::LDRSW;
+    } else {
+        out.op = is_load ? Arm64Op::LDR_IMM : Arm64Op::STR_IMM;
     }
     return out;
 }
@@ -326,11 +658,9 @@ Arm64Insn Arm64Decoder::decode_loads_stores(uint32_t insn, uint64_t pc) const {
 // ── Branches / system / exceptions ───────────────────────────────────────────
 Arm64Insn Arm64Decoder::decode_branches(uint32_t insn, uint64_t pc) const {
     Arm64Insn out{};
+    out.op = Arm64Op::UNKNOWN;  // any path that does not set op stays unknown
     out.raw = insn; out.pc = pc;
     out.is64 = true;
-
-    uint32_t op31 = bits(insn, 31, 29);
-    uint32_t op26 = bits(insn, 26, 26);
 
     if (insn == 0xD503201F) { out.op = Arm64Op::NOP; return out; }
 
@@ -421,9 +751,53 @@ std::string Arm64Insn::mnemonic() const {
     case Arm64Op::CMP_REG: case Arm64Op::CMP_IMM: name = "cmp"; break;
     case Arm64Op::CMN_REG: case Arm64Op::CMN_IMM: name = "cmn"; break;
     case Arm64Op::TST_REG: case Arm64Op::TST_IMM: name = "tst"; break;
-    case Arm64Op::UBFX: name = "ubfx"; break;
-    case Arm64Op::SBFX: name = "sbfx"; break;
-    case Arm64Op::BFI: name = "bfi"; break;
+    case Arm64Op::ADR: name = "adr"; break;
+    case Arm64Op::ADRP: name = "adrp"; break;
+    case Arm64Op::ADD_EXT: name = "add"; break;
+    case Arm64Op::SUB_EXT: name = "sub"; break;
+    case Arm64Op::ADC: name = "adc"; break;
+    case Arm64Op::SBC: name = "sbc"; break;
+    case Arm64Op::MADD: name = "madd"; break;
+    case Arm64Op::MSUB: name = "msub"; break;
+    case Arm64Op::SMADDL: name = "smaddl"; break;
+    case Arm64Op::SMSUBL: name = "smsubl"; break;
+    case Arm64Op::UMADDL: name = "umaddl"; break;
+    case Arm64Op::UMSUBL: name = "umsubl"; break;
+    case Arm64Op::SMULH: name = "smulh"; break;
+    case Arm64Op::UMULH: name = "umulh"; break;
+    case Arm64Op::UDIV: name = "udiv"; break;
+    case Arm64Op::SDIV: name = "sdiv"; break;
+    case Arm64Op::BIC_REG: name = "bic"; break;
+    case Arm64Op::ORN_REG: name = "orn"; break;
+    case Arm64Op::EON_REG: name = "eon"; break;
+    case Arm64Op::CSINV: name = "csinv"; break;
+    case Arm64Op::UBFM: name = "ubfm"; break;
+    case Arm64Op::SBFM: name = "sbfm"; break;
+    case Arm64Op::BFM: name = "bfm"; break;
+    case Arm64Op::EXTR: name = "extr"; break;
+    case Arm64Op::RBIT: name = "rbit"; break;
+    case Arm64Op::REV16: name = "rev16"; break;
+    case Arm64Op::REV: name = "rev"; break;
+    case Arm64Op::REV32: name = "rev32"; break;
+    case Arm64Op::CLZ: name = "clz"; break;
+    case Arm64Op::CLS: name = "cls"; break;
+    case Arm64Op::CCMP_REG: case Arm64Op::CCMP_IMM: name = "ccmp"; break;
+    case Arm64Op::CCMN_REG: case Arm64Op::CCMN_IMM: name = "ccmn"; break;
+    case Arm64Op::CRC32B: name = "crc32b"; break;
+    case Arm64Op::CRC32H: name = "crc32h"; break;
+    case Arm64Op::CRC32W: name = "crc32w"; break;
+    case Arm64Op::CRC32X: name = "crc32x"; break;
+    case Arm64Op::CRC32CB: name = "crc32cb"; break;
+    case Arm64Op::CRC32CH: name = "crc32ch"; break;
+    case Arm64Op::CRC32CW: name = "crc32cw"; break;
+    case Arm64Op::CRC32CX: name = "crc32cx"; break;
+    case Arm64Op::LDRSB: name = "ldrsb"; break;
+    case Arm64Op::LDRSH: name = "ldrsh"; break;
+    case Arm64Op::LDRSW: name = "ldrsw"; break;
+    case Arm64Op::FMADD: name = "fmadd"; break;
+    case Arm64Op::FMSUB: name = "fmsub"; break;
+    case Arm64Op::FNMADD: name = "fnmadd"; break;
+    case Arm64Op::FNMSUB: name = "fnmsub"; break;
     case Arm64Op::CSEL: name = "csel"; break;
     case Arm64Op::CSNEG: name = "csneg"; break;
     case Arm64Op::CSINC: name = "csinc"; break;
@@ -439,14 +813,25 @@ std::string Arm64Insn::mnemonic() const {
     case Arm64Op::FCSEL: name = "fcsel"; break;
     case Arm64Op::FMOV: case Arm64Op::FMOV_IMM: case Arm64Op::FMOV_TO_GPR:
     case Arm64Op::FMOV_FROM_GPR: name = "fmov"; break;
-    case Arm64Op::LDR_REG: case Arm64Op::LDR_IMM: name = "ldr"; break;
-    case Arm64Op::STR_REG: case Arm64Op::STR_IMM: name = "str"; break;
+    case Arm64Op::LDR_IMM: name = "ldr"; break;
+    case Arm64Op::STR_IMM: name = "str"; break;
     case Arm64Op::LDP: name = "ldp"; break;
     case Arm64Op::STP: name = "stp"; break;
-    case Arm64Op::LDRB: name = "ldrb"; break;
-    case Arm64Op::STRB: name = "strb"; break;
-    case Arm64Op::LDRH: name = "ldrh"; break;
-    case Arm64Op::STRH: name = "strh"; break;
+    case Arm64Op::LDPSW: name = "ldpsw"; break;
+    case Arm64Op::LDEX: name = "ldxr"; break;
+    case Arm64Op::STEX: name = "stxr"; break;
+    case Arm64Op::LDEXP: name = "ldxp"; break;
+    case Arm64Op::STEXP: name = "stxp"; break;
+    case Arm64Op::CAS: name = "cas"; break;
+    case Arm64Op::SWP: name = "swp"; break;
+    case Arm64Op::LDADD: name = "ldadd"; break;
+    case Arm64Op::LDCLR: name = "ldclr"; break;
+    case Arm64Op::LDEOR: name = "ldeor"; break;
+    case Arm64Op::LDSET: name = "ldset"; break;
+    case Arm64Op::LDSMAX: name = "ldsmax"; break;
+    case Arm64Op::LDSMIN: name = "ldsmin"; break;
+    case Arm64Op::LDUMAX: name = "ldumax"; break;
+    case Arm64Op::LDUMIN: name = "ldumin"; break;
     case Arm64Op::B: name = "b"; break;
     case Arm64Op::BL: name = "bl"; break;
     case Arm64Op::BLR: name = "blr"; break;

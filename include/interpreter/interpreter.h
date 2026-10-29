@@ -96,6 +96,10 @@ private:
     PcHook pc_hook_;
     bool running_ = false;
     bool faulted_ = false;
+    // Exclusive monitor for a single core: armed by LDXR/LDXP, consumed by STXR/STXP.
+    bool excl_valid_ = false;
+    uint64_t excl_addr_ = 0;
+    unsigned excl_bytes_ = 0;
     std::vector<DynamicMapping> dynamic_mappings_;
     uint64_t next_guest_mapping_ = 0x4000000000ULL;
 };

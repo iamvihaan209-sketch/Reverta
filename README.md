@@ -8,8 +8,8 @@ The opposite of Apple's Rosetta 2.
 | Phase | Feature | Status |
 |-------|---------|--------|
 | 1 | ARM64 Mach-O loader (static + fat binaries) | ✅ |
-| 1 | AArch64 instruction decoder (expanded: shifts, conditional select, multiply) | ✅ |
-| 1 | Interpreter (partial branches/load-store/integer semantics; full instruction coverage pending) | 🟡 |
+| 1 | AArch64 instruction decoder: integer data processing (incl. bitfields, logical immediates, extended/shifted operands, conditional compare, divide, multiply-add, CRC32, bit/byte ops), scalar FP incl. fused multiply-add, loads/stores (pairs, literal, register offset, exclusives, LSE atomics, SIMD&FP scalar and pair). Checked against Unicorn by `reverta_diff_oracle`. NEON structure loads (LD1–LD4/ST1–ST4) and most Advanced SIMD are not yet modelled. | 🟡 |
+| 1 | Interpreter (integer, scalar FP and memory semantics verified against an independent emulator; Advanced SIMD pending) | 🟡 |
 | 1 | Syscall translation (exit, read, write, open, mmap, ...) | ✅ |
 | 2 | JIT compiler (basic blocks: MOV, ADD/SUB, logic, shifts, CSEL, MUL) | ✅ |
 | 4 | NEON/SIMD (extended: compare, min/max, saturating arith) | ✅ |
@@ -30,6 +30,10 @@ Requires macOS 12+, Xcode Command Line Tools, CMake 3.20+.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(sysctl -n hw.logicalcpu)
 ```
+
+## Verification
+
+`reverta_diff_oracle` runs random single instructions through the interpreter and through Unicorn, an independent AArch64 emulator, and compares X registers, SP, NZCV, the full V registers and a window of data memory. It runs under `ctest` when the Python `unicorn` package is installed (`pip install unicorn`) and is skipped otherwise. Instructions the decoder does not model are reported as a coverage gap list.
 
 ## Usage
 

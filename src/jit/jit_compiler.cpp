@@ -55,44 +55,28 @@ static void mov_rax_imm64(std::vector<uint8_t>& c, uint64_t value) {
 // to JIT without needing guest memory or flag materialization.
 static bool jit_safe(const Arm64Insn& insn) {
     if (!insn.is64 || insn.set_flags) return false;
+    // The JIT emits only plain 64-bit forms: no shifted or extended operands,
+    // and no SP-form operands (register 31 is SP for add/sub immediate).
     switch (insn.op) {
     case Arm64Op::MOV_REG:
     case Arm64Op::MOV_IMM:
-    case Arm64Op::ADD_REG:
-    case Arm64Op::ADD_IMM:
-    case Arm64Op::SUB_REG:
-    case Arm64Op::SUB_IMM:
-    case Arm64Op::MUL:
-    case Arm64Op::SMULL:
-    case Arm64Op::UMULL:
     case Arm64Op::AND_REG:
     case Arm64Op::ORR_REG:
     case Arm64Op::EOR_REG:
-    // Shifts (immediate variants - register shifts handled by decoder shift amount)
-    case Arm64Op::LSL_IMM:
-    case Arm64Op::LSR_IMM:
-    case Arm64Op::ASR_IMM:
-    case Arm64Op::ROR_IMM:
-    // Conditional select (no flags dependency)
-    case Arm64Op::CSEL:
-        break;
+        return insn.shift_kind == 0 && insn.shift_amount == 0;
+    case Arm64Op::ADD_REG:
+    case Arm64Op::SUB_REG:
+        return insn.shift_kind == 0 && insn.shift_amount == 0 && insn.rn != 31;
+    case Arm64Op::ADD_IMM:
+    case Arm64Op::SUB_IMM:
+        return insn.rn != 31 && insn.rd != 31 && insn.imm >= 0;
+    case Arm64Op::MUL:
+        return insn.ra == 31;
     default:
+        // CSEL (always selects Rn), SMULL/UMULL (32-bit semantics) and every
+        // other op are interpreted. The JIT has no flags or width model.
         return false;
     }
-
-    // The phase-1 decoder does not yet model register shifts exactly.
-    // Only JIT straight-line instructions with no shift are safe here.
-    if (insn.op == Arm64Op::ADD_REG || insn.op == Arm64Op::SUB_REG) {
-        if (((insn.raw >> 22) & 0x3) != 0) return false;
-        // Rn=31 is SP for add/sub, not XZR.
-        if (insn.rn == 31) return false;
-    }
-    if (insn.op == Arm64Op::ADD_IMM || insn.op == Arm64Op::SUB_IMM) {
-        if (((insn.raw >> 22) & 0x1) != 0) return false;
-        // Rn=31 is SP for add/sub immediate.
-        if (insn.rn == 31) return false;
-    }
-    return true;
 }
 } // namespace
 
