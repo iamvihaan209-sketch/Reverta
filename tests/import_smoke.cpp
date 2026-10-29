@@ -135,7 +135,10 @@ std::vector<uint8_t> build_image() {
 
     // Entry: BL stub ; SVC #0
     put32(image, kCode + 0, 0x94000004);     // BL  +0x10 (stub)
-    put32(image, kCode + 4, 0xD4000001);     // SVC #0 (exit; x0 = result)
+    // After the call returns (x0 = 42): MOVK x0, #1, LSL #16 must keep the low
+    // 16 bits and set bits 16-31, giving 0x1002A. Then SVC #0 exits.
+    put32(image, kCode + 4, 0xF2A00020);     // MOVK x0, #1, LSL #16
+    put32(image, kCode + 8, 0xD4000001);     // SVC #0 (exit; x0 = result)
 
     // Stub: materialize the GOT address, load the bound pointer, branch to it.
     //   MOVZ x17, #2, LSL #32   -> x17 = 0x2_0000_0000 (slid __TEXT base)
@@ -216,7 +219,7 @@ int main() {
     });
     const RunResult result = interpreter.run();
     assert(result == RunResult::OK);
-    assert(observed_x0 == 42);
+    assert(observed_x0 == 0x1002A); // host returned 42; MOVK replaced only bits 16-31
 
     // The GOT slot must hold the trampoline the interceptor allocated for the import.
     const uint8_t* got = interpreter.guest_to_host(0x200000000ULL + kGotSlot, 8, GuestAccess::Read);

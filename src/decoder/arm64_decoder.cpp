@@ -68,11 +68,21 @@ Arm64Insn Arm64Decoder::decode_data_proc_imm(uint32_t insn, uint64_t pc) const {
         }
         break;
     }
-    case 0b100: case 0b101: { // Move wide (MOVZ, MOVN, MOVK) — treat as MOV_IMM
+    case 0b100: case 0b101: { // Move wide: MOVN (00), MOVZ (10), MOVK (11); 01 is reserved
         uint32_t opc = bits(insn, 30, 29);
         out.rd = bits(insn, 4, 0);
         uint32_t imm16 = bits(insn, 20, 5);
         uint32_t hw    = bits(insn, 22, 21);
+        out.move_shift = static_cast<uint8_t>(hw * 16);
+        if (opc == 0b01) {
+            out.op = Arm64Op::UNKNOWN;
+            break;
+        }
+        if (opc == 0b11) {
+            out.imm = imm16;
+            out.op  = Arm64Op::MOVK;
+            break;
+        }
         int64_t val = (int64_t)((uint64_t)imm16 << (hw * 16));
         if (opc == 0b00) val = ~val; // MOVN
         out.imm = val;
@@ -358,18 +368,68 @@ Arm64Insn Arm64Decoder::decode_branches(uint32_t insn, uint64_t pc) const {
 
 // ── Mnemonic for debug ────────────────────────────────────────────────────────
 std::string Arm64Insn::mnemonic() const {
-    static const char* names[] = {
-        "mov","mov","add","add","sub","sub","mul",
-        "and","and","orr","orr","eor","eor",
-        "lsl","lsr","asr","cmp","cmp",
-        "ldr","ldr","str","str","ldp","stp",
-        "ldrb","strb","ldrh","strh",
-        "b","bl","blr","br","ret","b.cond","cbz","cbnz","tbz","tbnz",
-        "svc","nop","???"
-    };
-    int idx = static_cast<int>(op);
-    if (idx < 0 || idx > static_cast<int>(Arm64Op::UNKNOWN)) idx = static_cast<int>(Arm64Op::UNKNOWN);
+    // A switch rather than a parallel name array: -Wswitch flags any new Arm64Op
+    // that lacks a name, instead of silently shifting every later name.
+    const char* name = "???";
+    switch (op) {
+    case Arm64Op::MOV_REG: case Arm64Op::MOV_IMM: name = "mov"; break;
+    case Arm64Op::MOVK: name = "movk"; break;
+    case Arm64Op::ADD_REG: case Arm64Op::ADD_IMM: name = "add"; break;
+    case Arm64Op::SUB_REG: case Arm64Op::SUB_IMM: name = "sub"; break;
+    case Arm64Op::MUL: name = "mul"; break;
+    case Arm64Op::SMULL: name = "smull"; break;
+    case Arm64Op::UMULL: name = "umull"; break;
+    case Arm64Op::AND_REG: case Arm64Op::AND_IMM: name = "and"; break;
+    case Arm64Op::ORR_REG: case Arm64Op::ORR_IMM: name = "orr"; break;
+    case Arm64Op::EOR_REG: case Arm64Op::EOR_IMM: name = "eor"; break;
+    case Arm64Op::LSL_IMM: case Arm64Op::LSL_REG: name = "lsl"; break;
+    case Arm64Op::LSR_IMM: case Arm64Op::LSR_REG: name = "lsr"; break;
+    case Arm64Op::ASR_IMM: case Arm64Op::ASR_REG: name = "asr"; break;
+    case Arm64Op::ROR_IMM: case Arm64Op::ROR_REG: name = "ror"; break;
+    case Arm64Op::CMP_REG: case Arm64Op::CMP_IMM: name = "cmp"; break;
+    case Arm64Op::CMN_REG: case Arm64Op::CMN_IMM: name = "cmn"; break;
+    case Arm64Op::TST_REG: case Arm64Op::TST_IMM: name = "tst"; break;
+    case Arm64Op::UBFX: name = "ubfx"; break;
+    case Arm64Op::SBFX: name = "sbfx"; break;
+    case Arm64Op::BFI: name = "bfi"; break;
+    case Arm64Op::CSEL: name = "csel"; break;
+    case Arm64Op::CSNEG: name = "csneg"; break;
+    case Arm64Op::CSINC: name = "csinc"; break;
+    case Arm64Op::FADD: name = "fadd"; break;
+    case Arm64Op::FSUB: name = "fsub"; break;
+    case Arm64Op::FMUL: name = "fmul"; break;
+    case Arm64Op::FDIV: name = "fdiv"; break;
+    case Arm64Op::FABS: name = "fabs"; break;
+    case Arm64Op::FNEG: name = "fneg"; break;
+    case Arm64Op::FCVT_SD: case Arm64Op::FCVT_DS: name = "fcvt"; break;
+    case Arm64Op::FCMP: name = "fcmp"; break;
+    case Arm64Op::FCMPE: name = "fcmpe"; break;
+    case Arm64Op::FCSEL: name = "fcsel"; break;
+    case Arm64Op::FMOV: case Arm64Op::FMOV_IMM: case Arm64Op::FMOV_TO_GPR:
+    case Arm64Op::FMOV_FROM_GPR: name = "fmov"; break;
+    case Arm64Op::LDR_REG: case Arm64Op::LDR_IMM: name = "ldr"; break;
+    case Arm64Op::STR_REG: case Arm64Op::STR_IMM: name = "str"; break;
+    case Arm64Op::LDP: name = "ldp"; break;
+    case Arm64Op::STP: name = "stp"; break;
+    case Arm64Op::LDRB: name = "ldrb"; break;
+    case Arm64Op::STRB: name = "strb"; break;
+    case Arm64Op::LDRH: name = "ldrh"; break;
+    case Arm64Op::STRH: name = "strh"; break;
+    case Arm64Op::B: name = "b"; break;
+    case Arm64Op::BL: name = "bl"; break;
+    case Arm64Op::BLR: name = "blr"; break;
+    case Arm64Op::BR: name = "br"; break;
+    case Arm64Op::RET: name = "ret"; break;
+    case Arm64Op::B_COND: name = "b.cond"; break;
+    case Arm64Op::CBZ: name = "cbz"; break;
+    case Arm64Op::CBNZ: name = "cbnz"; break;
+    case Arm64Op::TBZ: name = "tbz"; break;
+    case Arm64Op::TBNZ: name = "tbnz"; break;
+    case Arm64Op::SVC: name = "svc"; break;
+    case Arm64Op::NOP: name = "nop"; break;
+    case Arm64Op::UNKNOWN: break;
+    }
     std::ostringstream oss;
-    oss << names[idx] << "\t[raw=0x" << std::hex << raw << "]";
+    oss << name << "\t[raw=0x" << std::hex << raw << "]";
     return oss.str();
 }

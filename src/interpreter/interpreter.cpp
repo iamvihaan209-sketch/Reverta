@@ -642,6 +642,14 @@ void Interpreter::execute_data_proc(const Arm64Insn& insn) {
     case Arm64Op::MOV_IMM:
         write_result(insn.rd, (uint64_t)insn.imm);
         break;
+    case Arm64Op::MOVK: {
+        // Replace one 16-bit field of Rd and keep every other bit.
+        const uint64_t field_mask = 0xFFFFULL << insn.move_shift;
+        const uint64_t old_value = state_.reg(insn.rd);
+        write_result(insn.rd, (old_value & ~field_mask)
+                              | (((uint64_t)insn.imm << insn.move_shift) & field_mask));
+        break;
+    }
 
     case Arm64Op::ADD_REG: {
         uint64_t res = rn + rm;

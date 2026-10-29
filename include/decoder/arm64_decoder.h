@@ -6,6 +6,7 @@
 enum class Arm64Op {
     // Data processing - MOV/immediate
     MOV_REG, MOV_IMM,
+    MOVK,     // read-modify-write: replaces one 16-bit field, keeps the rest of Rd
     // Data processing - arithmetic
     ADD_REG, ADD_IMM,
     SUB_REG, SUB_IMM,
@@ -66,6 +67,7 @@ struct Arm64Insn {
 
     // Immediate / offset
     int64_t  imm;
+    uint8_t  move_shift = 0; // MOVZ/MOVN/MOVK: 16 * hw (0, 16, 32, 48)
     bool     is64;       // 64-bit variant (vs 32-bit Wn)
     bool     is_fp;      // scalar floating-point register operand
     bool     set_flags;  // S suffix (ADDS, SUBS, etc.)

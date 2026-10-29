@@ -80,14 +80,6 @@ static bool jit_safe(const Arm64Insn& insn) {
         return false;
     }
 
-    // MOVK is represented as MOV_IMM by the phase-1 decoder, but its
-    // semantics are read-modify-write and cannot be safely treated as MOV.
-    if (insn.op == Arm64Op::MOV_IMM) {
-        const uint32_t opc = (insn.raw >> 29) & 0x3;
-        // 00 = MOVN, 10 = MOVZ. MOVK is read-modify-write and 01 is reserved.
-        if (opc == 0x1 || opc == 0x3) return false;
-    }
-
     // The phase-1 decoder does not yet model register shifts exactly.
     // Only JIT straight-line instructions with no shift are safe here.
     if (insn.op == Arm64Op::ADD_REG || insn.op == Arm64Op::SUB_REG) {
