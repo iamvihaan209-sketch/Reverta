@@ -82,6 +82,7 @@ private:
     void execute(const Arm64Insn& insn);
     void execute_branch(const Arm64Insn& insn);
     void execute_load_store(const Arm64Insn& insn);
+    void execute_vector_structure(const Arm64Insn& insn);
     void execute_data_proc(const Arm64Insn& insn);
     void execute_fp(const Arm64Insn& insn);
 

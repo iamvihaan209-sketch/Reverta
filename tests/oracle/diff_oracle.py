@@ -59,9 +59,95 @@ def random_value(rng):
     return rng.getrandbits(64)
 
 
+MULTI_STRUCTURES = {          # opcode: (registers per structure, repeats)
+    0b0000: (4, 1), 0b0010: (1, 4), 0b0100: (3, 1), 0b0110: (1, 3),
+    0b0111: (1, 1), 0b1000: (2, 1), 0b1010: (1, 2),
+}
+
+
+def is_structure(word):
+    """Advanced SIMD structure load/store: bit 31 clear, bits 29:24 = 001100 (multiple)
+    or 001101 (single structure / replicate)."""
+    return (word >> 31) == 0 and ((word >> 24) & 0x3F) in (0b001100, 0b001101)
+
+
+def structure_valid(word):
+    q = (word >> 30) & 1
+    load = (word >> 22) & 1
+    size = (word >> 10) & 3
+    if ((word >> 24) & 1) == 0:
+        entry = MULTI_STRUCTURES.get((word >> 12) & 0xF)
+        if entry is None:
+            return False
+        return not (entry[0] > 1 and size == 3 and not q)   # LD2-4 of 1D is reserved
+    scale = (word >> 14) & 3
+    S = (word >> 12) & 1
+    if scale == 3:                                          # replicate: load only, S = 0
+        return bool(load) and not S
+    if scale == 0:
+        return True
+    if scale == 1:
+        return not (size & 1)
+    if size == 0:
+        return True
+    return size == 1 and S == 0
+
+
+def structure_regs(word):
+    """Number of vector registers a structure access transfers, from Rt."""
+    if ((word >> 24) & 1) == 0:
+        selem, rpt = MULTI_STRUCTURES[(word >> 12) & 0xF]
+        return selem * rpt
+    return (((word >> 13) & 1) << 1 | ((word >> 21) & 1)) + 1
+
+
+def structure_word(rng):
+    """A valid Advanced SIMD structure load or store, with a random base, Rt, index and writeback."""
+    while True:
+        multi = rng.random() < 0.5
+        q = rng.getrandbits(1)
+        post = rng.getrandbits(1)
+        load = rng.getrandbits(1)
+        rn = rng.getrandbits(5)
+        rt = rng.getrandbits(5)
+        rm = rng.getrandbits(5) if post else 0
+        if post and rm == rn and rn != 31:
+            rm = 31                                         # immediate writeback instead
+        if multi:
+            opcode = rng.choice(list(MULTI_STRUCTURES))
+            size = rng.getrandbits(2)
+            word = ((q << 30) | (0b001100 << 24) | (post << 23) | (load << 22)
+                    | (rm << 16) | (opcode << 12) | (size << 10) | (rn << 5) | rt)
+        else:
+            opc3 = rng.getrandbits(3)
+            R = rng.getrandbits(1)
+            S = rng.getrandbits(1)
+            size = rng.getrandbits(2)
+            word = ((q << 30) | (0b001101 << 24) | (post << 23) | (load << 22)
+                    | (R << 21) | (rm << 16) | (opc3 << 13) | (S << 12)
+                    | (size << 10) | (rn << 5) | rt)
+        if structure_valid(word):
+            return word
+
+
 def is_unpredictable(word):
     """Pair loads with Rt == Rt2, or Rt == Rn with writeback, are constrained
-    unpredictable; neither engine's choice is specified, so they are not compared."""
+    unpredictable; neither engine's choice is specified, so they are not compared.
+    Structure forms: reserved encodings are skipped, and a load with writeback whose
+    base is one of the transferred registers (or whose Xm is the base) is too."""
+    if is_structure(word):
+        if not structure_valid(word):
+            return True
+        rn = (word >> 5) & 31
+        rm = (word >> 16) & 31
+        post = (word >> 23) & 1
+        load = (word >> 22) & 1
+        if post and rn != 31 and rm == rn:
+            return True
+        if post and load and rn != 31:
+            rt = word & 31
+            return any((rt + k) % 32 == rn for k in range(structure_regs(word)))
+        return False
     if ((word >> 27) & 7) != 0b101 or not (word >> 22) & 1:
         return False
     rt = word & 31
@@ -91,6 +177,9 @@ def set_op0(word, top):
 def random_word(rng):
     w = rng.getrandbits(32)
     kind = rng.random()
+    if kind < 0.10:
+        # Advanced SIMD structure load/store (LDn/STn, LDnR, single lane).
+        return structure_word(rng)
     if kind < 0.25:
         # Single or pair load/store: op0 = x1x0.
         return set_op0(w, rng.choice([0b0100, 0b0110, 0b1100, 0b1110]))

@@ -64,6 +64,9 @@ enum class Arm64Op {
     CAS,                                // compare and swap
     SWP, LDADD, LDCLR, LDEOR, LDSET,    // LSE atomics (result = old value in Rt)
     LDSMAX, LDSMIN, LDUMAX, LDUMIN,
+    VLD_MULT, VST_MULT,                 // Advanced SIMD LD1-LD4 / ST1-ST4, multiple structures
+    VLD_LANE, VST_LANE,                 // Advanced SIMD single-lane LDn / STn
+    VLD_REPL,                           // Advanced SIMD LD1R-LD4R (replicate)
     // Branches
     B, BL, BLR, BR, RET,
     B_COND,   // Bcc
@@ -106,6 +109,10 @@ struct Arm64Insn {
     uint8_t  shift_amount = 0;
     uint8_t  ra = 31;        // third source register for 3-source multiplies
     uint8_t  access_bytes = 0; // memory operations: bytes per element (1..16)
+    uint8_t  selem = 1;      // Advanced SIMD structures: registers per structure
+    uint8_t  rpt = 1;        // Advanced SIMD multiple structures: repeat count
+    uint8_t  lane = 0;       // Advanced SIMD single-lane: element index
+    bool     vec_q = false;  // Advanced SIMD: 128-bit (Q=1) vector, else 64-bit
     bool     reg_offset = false;   // memory: address uses Rm (extended by shift_kind, << shift_amount)
     bool     pc_literal = false;   // memory: base is the instruction address (literal load)
     uint8_t  nzcv = 0;       // conditional compare: flags used when the condition fails

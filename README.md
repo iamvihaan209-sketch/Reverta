@@ -8,8 +8,8 @@ The opposite of Apple's Rosetta 2.
 | Phase | Feature | Status |
 |-------|---------|--------|
 | 1 | ARM64 Mach-O loader (static + fat binaries) | ✅ |
-| 1 | AArch64 instruction decoder: integer data processing (incl. bitfields, logical immediates, extended/shifted operands, conditional compare, divide, multiply-add, CRC32, bit/byte ops), scalar FP incl. fused multiply-add, loads/stores (pairs, literal, register offset, exclusives, LSE atomics, SIMD&FP scalar and pair). Checked against Unicorn by `reverta_diff_oracle`. NEON structure loads (LD1–LD4/ST1–ST4) and most Advanced SIMD are not yet modelled. | 🟡 |
-| 1 | Interpreter (integer, scalar FP and memory semantics verified against an independent emulator; Advanced SIMD pending) | 🟡 |
+| 1 | AArch64 instruction decoder: integer data processing (incl. bitfields, logical immediates, extended/shifted operands, conditional compare, divide, multiply-add, CRC32, bit/byte ops), scalar FP incl. fused multiply-add, loads/stores (pairs, literal, register offset, exclusives, LSE atomics, SIMD&FP scalar and pair). Checked against Unicorn by `reverta_diff_oracle`. Advanced SIMD structure loads and stores (LD1–LD4/ST1–ST4 multiple, LD1R–LD4R, single-lane) are modelled. Advanced SIMD data processing is not yet modelled. | 🟡 |
+| 1 | Interpreter (integer, scalar FP, memory and SIMD structure load/store semantics verified against an independent emulator; Advanced SIMD data processing pending) | 🟡 |
 | 1 | Syscall translation (exit, read, write, open, mmap, ...) | ✅ |
 | 2 | JIT compiler (basic blocks: MOV, ADD/SUB, logic, shifts, CSEL, MUL) | ✅ |
 | 4 | NEON/SIMD (extended: compare, min/max, saturating arith) | ✅ |

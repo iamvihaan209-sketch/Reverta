@@ -369,6 +369,11 @@ void Interpreter::execute(const Arm64Insn& insn) {
         execute_load_store(insn);
         break;
 
+    case Arm64Op::VLD_MULT: case Arm64Op::VST_MULT:
+    case Arm64Op::VLD_LANE: case Arm64Op::VST_LANE: case Arm64Op::VLD_REPL:
+        execute_vector_structure(insn);
+        break;
+
     // Scalar floating-point operations use the SIMD/FP register bank.
     case Arm64Op::FADD: case Arm64Op::FSUB:
     case Arm64Op::FMUL: case Arm64Op::FDIV: case Arm64Op::FABS: case Arm64Op::FNEG: case Arm64Op::FCVT_SD: case Arm64Op::FCVT_DS:
@@ -452,6 +457,85 @@ uint64_t bytes_mask(unsigned n) {
     return n >= 8 ? ~0ULL : ((1ULL << (8 * n)) - 1);
 }
 } // namespace
+
+// Advanced SIMD structure loads and stores (LDn/STn, LDnR, single-lane LDn/STn).
+//
+// Multiple structures: the list has rpt * selem registers starting at Rt. For
+// repeat r, structure element e and member s, the register is Rt + r*selem + s
+// and the memory slot is r*elements*selem + e*selem + s. Registers the list
+// writes are cleared first, so a 64-bit (Q=0) load zeroes the upper half.
+// Single lanes write one element and keep the rest of the register.
+// Replicate writes each of the selem registers with one element copied across.
+void Interpreter::execute_vector_structure(const Arm64Insn& insn) {
+    const unsigned esize = insn.access_bytes;             // bytes per element
+    const unsigned datasize = insn.vec_q ? 16u : 8u;      // bytes per vector
+    const unsigned elements = datasize / esize;
+    const unsigned selem = insn.selem;
+    const unsigned t = insn.rd;
+    const bool multi = insn.op == Arm64Op::VLD_MULT || insn.op == Arm64Op::VST_MULT;
+    const bool stores = insn.op == Arm64Op::VST_MULT || insn.op == Arm64Op::VST_LANE;
+    const unsigned total = multi ? insn.rpt * selem * datasize : selem * esize;
+
+    const uint64_t base = insn.rn == 31 ? state_.sp : state_.reg(insn.rn);
+    const uint64_t addr = base;
+    uint8_t* host = guest_to_host(addr, total,
+                                  stores ? GuestAccess::Write : GuestAccess::Read);
+    if (!host) {
+        std::fprintf(stderr, "[reverta] FAULT: vector access 0x%llx (%u bytes) unmapped\n",
+                     static_cast<unsigned long long>(addr), total);
+        faulted_ = true;
+        return;
+    }
+
+    if (insn.op == Arm64Op::VLD_MULT) {
+        for (unsigned k = 0; k < insn.rpt * selem; ++k) {
+            state_.q[(t + k) % 32][0] = 0;
+            state_.q[(t + k) % 32][1] = 0;
+        }
+    }
+
+    if (multi) {
+        for (unsigned r = 0; r < insn.rpt; ++r) {
+            for (unsigned e = 0; e < elements; ++e) {
+                for (unsigned s = 0; s < selem; ++s) {
+                    const unsigned reg = (t + r * selem + s) % 32;
+                    const unsigned slot = r * elements * selem + e * selem + s;
+                    uint8_t* reg_bytes = reinterpret_cast<uint8_t*>(state_.q[reg]);
+                    uint8_t* mem = host + static_cast<size_t>(slot) * esize;
+                    if (stores) std::memcpy(mem, reg_bytes + e * esize, esize);
+                    else        std::memcpy(reg_bytes + e * esize, mem, esize);
+                }
+            }
+        }
+    } else if (insn.op == Arm64Op::VLD_REPL) {
+        for (unsigned s = 0; s < selem; ++s) {
+            const unsigned reg = (t + s) % 32;
+            uint8_t* reg_bytes = reinterpret_cast<uint8_t*>(state_.q[reg]);
+            state_.q[reg][0] = 0;
+            state_.q[reg][1] = 0;
+            for (unsigned e = 0; e < elements; ++e)
+                std::memcpy(reg_bytes + e * esize, host + s * esize, esize);
+        }
+    } else if (!multi) {
+        // Single lane: only the addressed element of each register changes.
+        for (unsigned s = 0; s < selem; ++s) {
+            const unsigned reg = (t + s) % 32;
+            uint8_t* reg_bytes = reinterpret_cast<uint8_t*>(state_.q[reg]);
+            uint8_t* mem = host + s * esize;
+            uint8_t* lane = reg_bytes + static_cast<size_t>(insn.lane) * esize;
+            if (stores) std::memcpy(mem, lane, esize);
+            else        std::memcpy(lane, mem, esize);
+        }
+    }
+
+    // Post-index writeback: immediate equals the transfer size, or Xm.
+    if (insn.index_mode == 2) {
+        const uint64_t step = insn.rm == 31 ? total : state_.reg(insn.rm);
+        const uint64_t wb = base + step;
+        if (insn.rn == 31) state_.sp = wb;
+        else state_.x[insn.rn] = wb;
+    }
+}
 
 void Interpreter::execute_load_store(const Arm64Insn& insn) {
     const unsigned n = insn.access_bytes;                    // bytes per element

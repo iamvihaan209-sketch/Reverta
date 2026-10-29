@@ -582,6 +582,73 @@ Arm64Insn Arm64Decoder::decode_loads_stores(uint32_t insn, uint64_t pc) const {
         return out;
     }
 
+    // ── Advanced SIMD structure loads and stores: 0 Q 001 1 0 0 P L Rm opcode size Rn Rt
+    //    (multiple structures, bits 29:24 = 001100) and
+    //    0 Q 001 1 0 1 P L R Rm opc S size Rn Rt (single structure / replicate).
+    if (V && group == 0b001 && bits(insn, 31, 31) == 0 && bits(insn, 25, 25) == 0) {
+        const bool post = bits(insn, 23, 23);
+        const bool load_v = bits(insn, 22, 22);
+        const bool q = bits(insn, 30, 30);
+        out.vec_q = q;
+        out.index_mode = post ? 2 : 0;
+        if (!post && bits(insn, 20, 16) != 0) return out;    // Rm must be zero without writeback
+        if (bits(insn, 24, 24) == 0) {                          // multiple structures
+            const uint32_t opcode = bits(insn, 15, 12);
+            uint32_t rpt = 0, selem = 0;
+            switch (opcode) {
+            case 0b0000: rpt = 1; selem = 4; break;   // LD4/ST4
+            case 0b0010: rpt = 4; selem = 1; break;   // LD1/ST1, four registers
+            case 0b0100: rpt = 1; selem = 3; break;   // LD3/ST3
+            case 0b0110: rpt = 3; selem = 1; break;   // LD1/ST1, three registers
+            case 0b0111: rpt = 1; selem = 1; break;   // LD1/ST1, one register
+            case 0b1000: rpt = 1; selem = 2; break;   // LD2/ST2
+            case 0b1010: rpt = 2; selem = 1; break;   // LD1/ST1, two registers
+            default: return out;
+            }
+            const uint32_t size = bits(insn, 11, 10);
+            if (selem > 1 && size == 3 && !q) return out;   // LD2-4 of 1D is reserved
+            out.rpt = static_cast<uint8_t>(rpt);
+            out.selem = static_cast<uint8_t>(selem);
+            out.access_bytes = static_cast<uint8_t>(1u << size);
+            out.op = load_v ? Arm64Op::VLD_MULT : Arm64Op::VST_MULT;
+            return out;
+        }
+        // Single structure or replicate.
+        const uint32_t R = bits(insn, 21, 21);
+        const uint32_t opc3 = bits(insn, 15, 13);
+        const uint32_t S = bits(insn, 12, 12);
+        const uint32_t size = bits(insn, 11, 10);
+        const uint32_t scale = opc3 >> 1;
+        out.selem = static_cast<uint8_t>((((opc3 & 1) << 1) | R) + 1);
+        if (scale == 0b11) {                                    // replicate (LDnR only)
+            if (!load_v || S) return out;
+            out.access_bytes = static_cast<uint8_t>(1u << size);
+            out.op = Arm64Op::VLD_REPL;
+            return out;
+        }
+        uint32_t esize = 0, index = 0;
+        if (scale == 0b00) {                                    // B elements
+            esize = 1;
+            index = (q << 3) | (S << 2) | size;
+        } else if (scale == 0b01) {                             // H elements
+            if (size & 1) return out;
+            esize = 2;
+            index = (q << 2) | (S << 1) | (size >> 1);
+        } else if (size == 0) {                                 // S elements
+            esize = 4;
+            index = (q << 1) | S;
+        } else if (size == 1 && S == 0) {                       // D elements
+            esize = 8;
+            index = q;
+        } else {
+            return out;
+        }
+        out.access_bytes = static_cast<uint8_t>(esize);
+        out.lane = static_cast<uint8_t>(index);
+        out.op = load_v ? Arm64Op::VLD_LANE : Arm64Op::VST_LANE;
+        return out;
+    }
+
     // ── Single register: size 111 V 00 ... ───────────────────────────────────
     if (group != 0b111) return out;
 
@@ -820,6 +887,11 @@ std::string Arm64Insn::mnemonic() const {
     case Arm64Op::LDPSW: name = "ldpsw"; break;
     case Arm64Op::LDEX: name = "ldxr"; break;
     case Arm64Op::STEX: name = "stxr"; break;
+    case Arm64Op::VLD_MULT: name = "ld_multi"; break;
+    case Arm64Op::VST_MULT: name = "st_multi"; break;
+    case Arm64Op::VLD_LANE: name = "ld_lane"; break;
+    case Arm64Op::VST_LANE: name = "st_lane"; break;
+    case Arm64Op::VLD_REPL: name = "ld_repl"; break;
     case Arm64Op::LDEXP: name = "ldxp"; break;
     case Arm64Op::STEXP: name = "stxp"; break;
     case Arm64Op::CAS: name = "cas"; break;
