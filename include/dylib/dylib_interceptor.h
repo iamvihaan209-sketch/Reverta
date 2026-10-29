@@ -18,9 +18,11 @@ using HostFn = std::function<uint64_t(uint64_t* args, int nargs)>;
 //
 // How it works:
 //   1. Loader sees LC_DYLD_INFO / LC_DYLD_EXPORTS_TRIE stub entries
-//   2. For each imported symbol, we create a tiny "trampoline" page:
-//      a known guest address → SVC #0xAB (our special trampoline vector)
-//   3. Interpreter sees SVC #0xAB, reads x16 = trampoline ID, dispatches to HostFn
+//   2. For each imported symbol, allocate_trampoline() hands out a fake guest
+//      address. Nothing is mapped there.
+//   3. When a guest BL/BR lands on that address, the interpreter's PC hook
+//      (is_trampoline) dispatches the bound HostFn and returns to the caller.
+//      SVC is not used for this; every SVC goes to the syscall handler.
 //
 class DylibInterceptor {
 public:
@@ -33,8 +35,8 @@ public:
     HostFn lookup(const std::string& name) const;
 
     // Allocate a guest trampoline address for a symbol.
-    // Returns a fake guest PC; when the interpreter hits SVC #0xAB at that PC,
-    // it calls the associated HostFn.
+    // Returns a fake guest PC; a guest branch to that PC calls the associated
+    // HostFn (see is_trampoline below).
     GuestPtr allocate_trampoline(const std::string& name);
 
     // True if pc is a trampoline address handed out by allocate_trampoline.

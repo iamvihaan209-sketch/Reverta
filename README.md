@@ -61,7 +61,7 @@ ARM64 Mach-O binary
 │  Interpreter  │  execute Arm64Insn, maintain CpuState (x0-x30, sp, pc, NZCV)
 └───────┬───────┘
         │
-     SVC #0           SVC #0xAB
+     SVC #0      branch to trampoline
         │                  │
         ▼                  ▼
 ┌──────────────┐   ┌──────────────────┐
