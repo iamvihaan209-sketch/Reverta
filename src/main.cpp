@@ -83,20 +83,19 @@ int main(int argc, char** argv) {
     DylibInterceptor& dylib = DylibInterceptor::instance();
 
     interp.set_syscall_handler([&](CpuState& state) -> bool {
-        // SVC #0    → normal syscall (exit, read, write, mmap, ...)
-        // SVC #0xAB → dylib trampoline dispatch
-        uint32_t* pc = reinterpret_cast<uint32_t*>(
-            interp.guest_to_host(state.pc - 4));
-        uint32_t svc_imm = pc ? ((*pc >> 5) & 0xFFFF) : 0;
-
-        if (svc_imm == 0xAB) {
-            // Dylib trampoline: x15 = trampoline PC (set by allocate_trampoline)
-            GuestPtr trampoline_pc = state.x[15];
-            uint64_t result = dylib.dispatch_trampoline(trampoline_pc, state.x, 8);
-            state.x[0] = result;
-            return true;
-        }
         return syscalls.handle(state);
+    });
+
+    // Imported symbols resolve to trampoline addresses (not mapped memory).
+    // A guest BL/BR to one runs the host implementation and returns to LR,
+    // exactly as a call to a real dylib function would.
+    interp.set_pc_hook([&](CpuState& state) -> bool {
+        if (!dylib.is_trampoline(state.pc)) return false;
+        const GuestPtr return_pc = state.x[30];
+        if (return_pc == 0 || dylib.is_trampoline(return_pc)) return false;
+        state.x[0] = dylib.dispatch_trampoline(state.pc, state.x, 8);
+        state.pc = return_pc;
+        return true;
     });
 
     // ── Run ───────────────────────────────────────────────────────────────────

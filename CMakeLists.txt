@@ -103,4 +103,15 @@ if(BUILD_TESTING)
     )
     target_include_directories(reverta_syscall_smoke PRIVATE include)
     add_test(NAME reverta_syscall_smoke COMMAND reverta_syscall_smoke)
+
+    add_executable(reverta_import_smoke
+        tests/import_smoke.cpp
+        src/loader/macho_loader.cpp
+        src/interpreter/interpreter.cpp
+        src/decoder/arm64_decoder.cpp
+        src/jit/jit_compiler.cpp
+        src/dylink/dyld_linker.cpp
+    )
+    target_include_directories(reverta_import_smoke PRIVATE include)
+    add_test(NAME reverta_import_smoke COMMAND reverta_import_smoke)
 endif()

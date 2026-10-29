@@ -169,6 +169,7 @@ RunResult Interpreter::run() {
 
     while (running_) {
         if (!guest_to_host(state_.pc, sizeof(uint32_t), GuestAccess::Execute)) {
+            if (pc_hook_ && pc_hook_(state_)) continue;
             std::fprintf(stderr, "[reverta] FAULT: PC 0x%llx is not executable\n",
                          (unsigned long long)state_.pc);
             return RunResult::FAULT;
@@ -220,7 +221,7 @@ RunResult Interpreter::run() {
 bool Interpreter::step() {
     if (faulted_) return false;
     uint8_t* host_pc = guest_to_host(state_.pc, sizeof(uint32_t), GuestAccess::Execute);
-    if (!host_pc) return false;
+    if (!host_pc) return pc_hook_ && pc_hook_(state_);
     Arm64Insn insn = decoder_.decode(host_pc, state_.pc);
     uint64_t old_pc = state_.pc;
     execute(insn);

@@ -41,12 +41,18 @@ enum class GuestAccess { Read, Write, Execute };
 // Syscall handler: receives cpu state, returns false to stop execution
 using SyscallHandler = std::function<bool(CpuState&)>;
 
+// PC hook: called when the PC is not executable guest memory (for example an
+// imported-symbol trampoline). Return true if the hook handled it and updated
+// state.pc; return false to fault.
+using PcHook = std::function<bool(CpuState&)>;
+
 class Interpreter {
 public:
     explicit Interpreter(const LoadedBinary& binary);
     ~Interpreter();
 
     void set_syscall_handler(SyscallHandler h) { syscall_handler_ = std::move(h); }
+    void set_pc_hook(PcHook h) { pc_hook_ = std::move(h); }
 
     // Run from entry point until exit or error
     RunResult run();
@@ -87,6 +93,7 @@ private:
     CpuState state_;
     Arm64Decoder decoder_;
     SyscallHandler syscall_handler_;
+    PcHook pc_hook_;
     bool running_ = false;
     bool faulted_ = false;
     std::vector<DynamicMapping> dynamic_mappings_;

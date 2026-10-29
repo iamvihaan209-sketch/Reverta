@@ -37,8 +37,12 @@ public:
     // it calls the associated HostFn.
     GuestPtr allocate_trampoline(const std::string& name);
 
-    // Called by the interpreter when SVC #0xAB fires.
-    // Looks up the HostFn by PC and dispatches.
+    // True if pc is a trampoline address handed out by allocate_trampoline.
+    // Trampolines are not mapped guest memory; the interpreter's PC hook
+    // dispatches them when a guest branch lands on one.
+    bool is_trampoline(GuestPtr pc) const { return trampoline_to_name_.count(pc) != 0; }
+
+    // Runs the HostFn bound to a trampoline PC and returns its result (x0).
     uint64_t dispatch_trampoline(GuestPtr pc, uint64_t* args, int nargs);
 
     // Install all known system library stubs (ObjC, Swift, CF, AppKit, POSIX)
